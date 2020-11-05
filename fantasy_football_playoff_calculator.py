@@ -4,6 +4,7 @@
 import sys
 import pyodbc
 import math
+import time
 
 #-------------------------------------------------
 # Classes
@@ -100,22 +101,18 @@ def ProcessWeeklyMatchups(matchupPeriod):
                         Teams[weeklyMatchups[4].RosterId-1].Schedule[mp] = (m == 0)
                         Teams[weeklyMatchups[4].OpponentRosterId-1].Schedule[mp] = (m == 1)
 
-                        for n in range(0, 2, 1):
-                            Teams[weeklyMatchups[5].RosterId-1].Schedule[mp] = (n == 0)
-                            Teams[weeklyMatchups[5].OpponentRosterId-1].Schedule[mp] = (n == 1)
-
-                            if (matchupPeriod == 13):
-                                DeterminePlayoffSpotFinishes()
-                                DeterminePlayoffChances()                                
-                            else:
-                                ProcessWeeklyMatchups(matchupPeriod+1)
+                        if (matchupPeriod == 13):
+                            DeterminePlayoffSpotFinishes()
+                            DeterminePlayoffChances()                                
+                        else:
+                            ProcessWeeklyMatchups(matchupPeriod+1)
 
 # Determine the playoff spot finishes in the current scenario.
 def DeterminePlayoffSpotFinishes():
     sortedTeams = sorted(Teams, key=lambda x: x.Wins, reverse=True)
 
     rank = 0
-    for r in range(0, 12, 1):
+    for r in range(0, 10, 1):
         if (r != 0 and sortedTeams[r].Wins < sortedTeams[r - 1].Wins):
             rank = r
         Teams[sortedTeams[r].RosterId - 1].PlayoffSpotFinishes[rank]+=1
@@ -136,11 +133,11 @@ def DeterminePlayoffChances():
 #-------------------------------------------------
 
 # Define constants
-LeagueId = ''
-StartingWeek = 12
-Scenarios = math.pow(64,(13-(StartingWeek-1)))
+LeagueId = '515624492465426432'
+StartingWeek = 9
+# 2^(num_teams/2)
+Scenarios = math.pow(32,(13-(StartingWeek-1)))
 
-# Define database constants.
 # Define database constants.
 server = ''
 database = ''
@@ -160,7 +157,7 @@ Matchups = []
 InitializeMatchups(LeagueId)
 
 # Print the amount of time it should take to run the app.
-print("There are {} scenarios starting in week {}. This will take approx {} seconds.".format(Scenarios, StartingWeek, Scenarios*0.00000762939453125))
+print("There are {} scenarios starting in week {}. This will take approx {} seconds (or {} minutes).".format(Scenarios, StartingWeek, Scenarios*0.000096875, (Scenarios*0.000096875)/60))
 
 # Process all the matchups.
 ProcessWeeklyMatchups(StartingWeek)
@@ -173,9 +170,9 @@ for team in sorted(Teams, key=lambda x: x.PlayoffSpotClinchedScenarios, reverse=
     print("{} {}% {}%".format(team_name, potential_playoff_spot_scenarios, clinched_playoff_spot_scenarios))
 
 # Print the potential finishes.
-print("\nName\t1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12")
+print("\nName\t1\t2\t3\t4\t5\t6\t7\t8\t9\t10")
 for team in sorted(Teams, key=lambda x: x.PlayoffSpotClinchedScenarios, reverse=True):
     formatted_string = team.Name.split(' ')[0]
-    for i in range(0, 12, 1):
+    for i in range(0, 10, 1):
         formatted_string += ("\t{}".format(team.PlayoffSpotFinishes[i]))
     print (formatted_string)
