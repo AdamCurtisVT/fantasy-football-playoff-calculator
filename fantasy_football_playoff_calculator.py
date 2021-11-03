@@ -199,7 +199,7 @@ for user in users:
     index = next((i for i, team in enumerate(teams) if user["user_id"] == team.OwnerId), -1)
     teams[index].Name = user["display_name"]
 
-scenarios = math.pow(math.pow(2, league_total_rosters/2),(playoff_week_start-(starting_week-1))) # 2^(num_teams/2).
+scenarios = math.pow(math.pow(2, league_total_rosters/2),((playoff_week_start-1)-(starting_week-1))) # 2^(num_teams/2).
 time_per_scenario = 0.00009700441
 
 # Print the amount of time it should take to run the app.
@@ -213,7 +213,7 @@ for team in sorted(teams, key=lambda x: x.PlayoffSpotClinchedScenarios, reverse=
     team_name = team.Name.split(' ')[0]
     potential_playoff_spot_scenarios = round((team.PlayoffBoundScenarios/scenarios)*100, 2)
     clinched_playoff_spot_scenarios = round((team.PlayoffSpotClinchedScenarios/scenarios)*100, 2)
-    print("{} {}% {}%".format(team_name, potential_playoff_spot_scenarios, clinched_playoff_spot_scenarios))
+    print("{} {}% ({}%)".format(team_name, potential_playoff_spot_scenarios, clinched_playoff_spot_scenarios))
 
 # Print the potential finishes.
 print("\nName\t1\t2\t3\t4\t5\t6\t7\t8\t9\t10")
