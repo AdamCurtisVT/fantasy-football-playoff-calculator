@@ -2,7 +2,7 @@
 # Imports
 #-------------------------------------------------
 import math
-import pyodbc
+import requests
 
 #-------------------------------------------------
 # Classes
@@ -16,15 +16,21 @@ class Team(object):
     PlayoffSpotClinchedScenarios = 0
     PlayoffSpotFinishes = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     Schedule = [False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+    Winss = 0
+    Losses = 0
+    Ties = 0
 
     # Initializes a new instance of the class.
-    def __init__(self, name, rosterId):
+    def __init__(self, name, rosterId, wins, losses, ties):
         self.Name = name
         self.RosterId = rosterId
         self.PlayoffBoundScenarios = 0
         self.PlayoffSpotClinchedScenarios = 0
-        self.Schedule = [False, False, False, False, False, False, False, False, False, False, False, False, False, False]
         self.PlayoffSpotFinishes = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        self.Schedule = [False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+        self.Winss = wins
+        self.Losses = losses
+        self.Ties = ties
 
     # Returns the number of wins in the season.
     @property
@@ -34,47 +40,20 @@ class Team(object):
 # Represents a Fantasy Football matchup.
 class Matchup(object):
     MatchupPeriod = 0
+    MatchupId = 0
     RosterId = None
     OpponentRosterId = None
 
     # Initializes a new instance of the class.
-    def __init__(self, matchupPeriod, rosterId, opponentRosterId):
+    def __init__(self, matchupPeriod, matchupId, rosterId, opponentRosterId):
         self.MatchupPeriod = matchupPeriod
+        self.MatchupId = matchupId
         self.RosterId = rosterId
         self.OpponentRosterId = opponentRosterId
 
 #-------------------------------------------------
 # Functions
 #-------------------------------------------------
-
-# Initializes the list of matchups.
-def InitializeMatchups(league_id):
-    cursor.execute("SELECT MatchupPeriod, RosterId, OpponentRosterId FROM simulation.LeagueSchedule WHERE LeagueId = '{}'".format(league_id))
-    rows = cursor.fetchall()
-    for row in rows:
-        matchups.append(Matchup(row.MatchupPeriod, row.RosterId, row.OpponentRosterId))
-
-# Initializes the list of teams.
-def InitializeTeams(league_id):
-    cursor.execute("SELECT LeagueId,RosterId,UserName,WeekOneResult,WeekTwoResult,WeekThreeResult,WeekFourResult,WeekFiveResult,WeekSixResult,WeekSevenResult,WeekEightResult,WeekNineResult,WeekTenResult,WeekElevenResult,WeekTwelveResult,WeekThirteenResult,WeekFourteenResult FROM simulation.OwnerSummaryMatchup WHERE LeagueId = '{}' ORDER BY RosterId ASC".format(league_id))
-    rows = cursor.fetchall()
-    for row in rows:
-        tmp = Team(row.UserName, row.RosterId)
-        tmp.Schedule[0] = True if row.WeekOneResult == "Win" else False
-        tmp.Schedule[1] = True if row.WeekTwoResult == "Win" else False
-        tmp.Schedule[2] = True if row.WeekThreeResult == "Win" else False
-        tmp.Schedule[3] = True if row.WeekFourResult == "Win" else False
-        tmp.Schedule[4] = True if row.WeekFiveResult == "Win" else False
-        tmp.Schedule[5] = True if row.WeekSixResult == "Win" else False
-        tmp.Schedule[6] = True if row.WeekSevenResult == "Win" else False
-        tmp.Schedule[7] = True if row.WeekEightResult == "Win" else False
-        tmp.Schedule[8] = True if row.WeekNineResult == "Win" else False
-        tmp.Schedule[9] = True if row.WeekTenResult == "Win" else False
-        tmp.Schedule[10] = True if row.WeekElevenResult == "Win" else False
-        tmp.Schedule[11] = True if row.WeekTwelveResult == "Win" else False
-        tmp.Schedule[12] = True if row.WeekThirteenResult == "Win" else False
-        tmp.Schedule[13] = True if row.WeekFourteenResult == "Win" else False
-        teams.append(tmp)
 
 # Processes the weekly matchups.
 def ProcessWeeklyMatchups(matchupPeriod):
@@ -100,7 +79,7 @@ def ProcessWeeklyMatchups(matchupPeriod):
                         teams[weeklyMatchups[4].RosterId-1].Schedule[mp] = (m == 0)
                         teams[weeklyMatchups[4].OpponentRosterId-1].Schedule[mp] = (m == 1)
 
-                        if (matchupPeriod == 14):
+                        if (matchupPeriod == 13):
                             DeterminePlayoffSpotFinishes()
                             DeterminePlayoffChances()                                
                         else:
@@ -127,6 +106,67 @@ def DeterminePlayoffChances():
             team.PlayoffBoundScenarios += 1
             team.PlayoffSpotClinchedScenarios += 1 
 
+# Call the Sleeper API to retrieve all league for a specific user in a season.
+def GetLeaguesForUser(user_id, sport, season):
+    endpoint = ('https://api.sleeper.app/v1/user/{}/leagues/{}/{}'.format(user_id, sport, season))
+    response = requests.get(endpoint)
+    
+    if response.status_code == 200:
+        leagues = list()
+        for league in response.json():
+            leagues.append(league)
+        return leagues
+    else:
+        return None
+
+# Call the Sleeper API to retrieve all matchups in a league for the specified week.
+def GetLeagueMatchups(league_id, week):
+    endpoint = ('https://api.sleeper.app/v1/league/{}/matchups/{}'.format(league_id, week))
+    response = requests.get(endpoint)
+    
+    if response.status_code == 200:
+        matchups = list()
+        for matchup in response.json():
+            matchups.append(matchup)
+        return matchups
+    else:
+        return None
+
+def GetLeagueRosters(league_id):
+    endpoint = ('https://api.sleeper.app/v1/league/{}/rosters'.format(league_id))
+    response = requests.get(endpoint)
+    
+    if response.status_code == 200:
+        rosters = list()
+        for roster in response.json():
+            rosters.append(roster)
+        return rosters
+    else:
+        return None
+
+# Call the Sleeper API to retrieve all users in a specific league['
+def GetLeagueUsers(league_id):
+    endpoint = ('https://api.sleeper.app/v1/league/{}/users'.format(league_id))
+    response = requests.get(endpoint)
+    
+    if response.status_code == 200:
+        users = list()
+        for user in response.json():
+            users.append(user)
+        return users
+    else:
+        return None
+
+# Call the Sleeper API to retrieve a user.
+def GetUser(user_id):
+    endpoint = ('https://api.sleeper.app/v1/user/{}'.format(user_id))
+    response = requests.get(endpoint)
+    
+    if response.status_code == 200:
+        return response.json()
+    else:
+        return None
+
 #-------------------------------------------------
 # Main
 #-------------------------------------------------
@@ -137,23 +177,44 @@ starting_week = 9
 scenarios = math.pow(32,(14-(starting_week-1))) # 2^(num_teams/2).
 time_per_scenario = 0.00009700441
 
-# Define database constants.
-server = ''
-database = ''
-username = ''
-password = ''
-
-# Configure a connection and cursor to the database.
-connection = pyodbc.connect(f'DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}', autocommit=True)
-cursor = connection.cursor()
-
-# Create the list of teams.
-teams = []
-InitializeTeams(league_id)
+# Define constants
+accountname = 'adamcurtisvt'
+sport = 'nfl'
+season = '2021'
 
 # Create the list of matchups.
 matchups = []
-InitializeMatchups(league_id)
+
+# Get the users in the league.
+#account = GetUser(accountname)
+#leagues = GetLeaguesForUser(account['user_id'], sport, season)
+#league_matchups = GetLeagueMatchups(league_id, starting_week)
+#league_matchups = GetLeagueMatchups(league_id, starting_week)
+#playoff_week_start = leagues[0]["settings"]["playoff_week_start"]
+playoff_week_start = 14
+
+# Iterate through the remaining weeks and create the matchups.
+# Sleeper does not give the opponents' roster id, so look through the list to see if the matchup id already exists.
+for week in range(starting_week, playoff_week_start):
+    for league_matchup in GetLeagueMatchups(league_id, week):
+        index = next((i for i, matchup in enumerate(matchups) if matchup.MatchupId == league_matchup["matchup_id"] and matchup.MatchupPeriod == week), -1)
+
+        if index > -1:
+            matchups[index].OpponentRosterId = league_matchup["roster_id"]
+        else:
+            matchups.append(Matchup(week, league_matchup["matchup_id"], league_matchup["roster_id"], None))
+
+
+#league_users = GetLeagueUsers(league_id)
+league_rosters = GetLeagueRosters(league_id)
+
+# Create the list of teams.
+teams = []
+for league_roster in league_rosters:
+    team = Team("", league_roster["roster_id"], league_roster["settings"]["wins"], league_roster["settings"]["losses"], league_roster["settings"]["ties"])
+    for w in range (0, team.Winss):
+        team.Schedule[w] = True
+    teams.append(team)
 
 # Print the amount of time it should take to run the app.
 print("There are {} scenarios starting in week {}. This will take approx {} seconds (or {} minutes).".format(scenarios, starting_week, scenarios*time_per_scenario, (scenarios*time_per_scenario)/60))
