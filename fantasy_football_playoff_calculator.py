@@ -17,7 +17,7 @@ class Team(object):
     PlayoffSpotClinchedScenarios = 0
     PlayoffSpotFinishes = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     Schedule = [False, False, False, False, False, False, False, False, False, False, False, False, False, False]
-    Winss = 0
+    Wins = 0
     Losses = 0
     Ties = 0
 
@@ -30,13 +30,13 @@ class Team(object):
         self.PlayoffSpotClinchedScenarios = 0
         self.PlayoffSpotFinishes = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         self.Schedule = [False, False, False, False, False, False, False, False, False, False, False, False, False, False]
-        self.Winss = wins
+        self.Wins = wins
         self.Losses = losses
         self.Ties = ties
 
     # Returns the number of wins in the season.
     @property
-    def Wins(self):
+    def ScheduleWins(self):
         return sum(self.Schedule)
 
 # Represents a Fantasy Football matchup.
@@ -89,22 +89,22 @@ def ProcessWeeklyMatchups(matchupPeriod):
 
 # Determine the playoff spot finishes in the current scenario.
 def DeterminePlayoffSpotFinishes():
-    sortedTeams = sorted(teams, key=lambda x: x.Wins, reverse=True)
+    sortedTeams = sorted(teams, key=lambda x: x.ScheduleWins, reverse=True)
 
     rank = 0
     for r in range(0, 10, 1):
-        if (r != 0 and sortedTeams[r].Wins < sortedTeams[r - 1].Wins):
+        if (r != 0 and sortedTeams[r].ScheduleWins < sortedTeams[r - 1].ScheduleWins):
             rank = r
         teams[sortedTeams[r].RosterId - 1].PlayoffSpotFinishes[rank]+=1
 
 # Determine the playoff chances in the current scenario.
 def DeterminePlayoffChances():
-    minimumWins = sorted(teams, key=lambda x: x.Wins, reverse=True)[league_playoff_teams-1].Wins
+    minimumWins = sorted(teams, key=lambda x: x.ScheduleWins, reverse=True)[league_playoff_teams-1].ScheduleWins
 
     for team in teams:
-        if (team.Wins == minimumWins):
+        if (team.ScheduleWins == minimumWins):
             team.PlayoffBoundScenarios += 1
-        elif (team.Wins > minimumWins):
+        elif (team.ScheduleWins > minimumWins):
             team.PlayoffBoundScenarios += 1
             team.PlayoffSpotClinchedScenarios += 1 
 
@@ -190,7 +190,7 @@ for week in range(starting_week, league_playoff_week_start):
 teams = []
 for league_roster in GetLeagueRosters(league_id):
     team = Team("", league_roster["roster_id"], league_roster["owner_id"], league_roster["settings"]["wins"], league_roster["settings"]["losses"], league_roster["settings"]["ties"])
-    for w in range (0, team.Winss):
+    for w in range (0, team.Wins):
         team.Schedule[w] = True
     teams.append(team)
 
