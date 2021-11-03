@@ -200,10 +200,9 @@ for user in users:
     index = next((i for i, team in enumerate(teams) if user["user_id"] == team.OwnerId), -1)
     teams[index].Name = user["display_name"]
 
+# Print the amount of time it should take to run the app.
 scenarios = math.pow(math.pow(2, league_total_rosters/2),((league_playoff_week_start-1)-(starting_week-1))) # 2^(num_teams/2).
 time_per_scenario = 0.00009700441
-
-# Print the amount of time it should take to run the app.
 print("There are {} scenarios starting in week {}. This will take approx {} seconds (or {} minutes).".format(scenarios, starting_week, scenarios*time_per_scenario, (scenarios*time_per_scenario)/60))
 
 # Process all the matchups.
