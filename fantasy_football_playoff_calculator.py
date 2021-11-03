@@ -99,7 +99,7 @@ def DeterminePlayoffSpotFinishes():
 
 # Determine the playoff chances in the current scenario.
 def DeterminePlayoffChances():
-    minimumWins = sorted(teams, key=lambda x: x.Wins, reverse=True)[5].Wins
+    minimumWins = sorted(teams, key=lambda x: x.Wins, reverse=True)[league_playoff_teams-1].Wins
 
     for team in teams:
         if (team.Wins == minimumWins):
@@ -170,13 +170,14 @@ league_id = '650414955312558080'
 starting_week = 9
 
 league = GetLeague(league_id)
-playoff_week_start = league["settings"]["playoff_week_start"]
+league_playoff_week_start = league["settings"]["playoff_week_start"]
+league_playoff_teams = league["settings"]["playoff_teams"]
 league_total_rosters = league["total_rosters"]
 
 # Iterate through the remaining weeks and create the matchups.
 # Sleeper does not give the opponents' roster id, so look through the list to see if the matchup id already exists.
 matchups = []
-for week in range(starting_week, playoff_week_start):
+for week in range(starting_week, league_playoff_week_start):
     for league_matchup in GetLeagueMatchups(league_id, week):
         index = next((i for i, matchup in enumerate(matchups) if matchup.MatchupId == league_matchup["matchup_id"] and matchup.MatchupPeriod == week), -1)
         if index > -1:
@@ -199,7 +200,7 @@ for user in users:
     index = next((i for i, team in enumerate(teams) if user["user_id"] == team.OwnerId), -1)
     teams[index].Name = user["display_name"]
 
-scenarios = math.pow(math.pow(2, league_total_rosters/2),((playoff_week_start-1)-(starting_week-1))) # 2^(num_teams/2).
+scenarios = math.pow(math.pow(2, league_total_rosters/2),((league_playoff_week_start-1)-(starting_week-1))) # 2^(num_teams/2).
 time_per_scenario = 0.00009700441
 
 # Print the amount of time it should take to run the app.
