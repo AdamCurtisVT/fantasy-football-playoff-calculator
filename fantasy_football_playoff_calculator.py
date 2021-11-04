@@ -3,23 +3,27 @@
 #-------------------------------------------------
 import math
 import requests
-import time
-
 #-------------------------------------------------
 # Classes
 #-------------------------------------------------
 
-# Represents a Fantasy Football team.
-class Team(object):
-    Name = None
-    RosterId = 0
-    OwnerId = 0
+# Represents a Fantasy Football league.
+class League(object):
+    Id = 0
+    CurrentWeek = 0
+    LastWeekOfRegularSeason = 0
+    PlayoffWeekStart = 0
+    NumberOfTeams = 0
+    NumberOfPlayoffTeams = 0
 
     # Initializes a new instance of the class.
-    def __init__(self, name, rosterId, owner_id):
-        self.Name = name
-        self.RosterId = rosterId
-        self.OwnerId = owner_id
+    def __init__(self, id):
+        self.Id = id
+        self.CurrentWeek = 0
+        self.LastWeekOfRegularSeason = 0
+        self.PlayoffWeekStart = 0
+        self.NumberOfTeams = 0
+        self.NumberOfPlayoffTeams = 0
 
 # Represents a Fantasy Football matchup.
 class Matchup(object):
@@ -35,9 +39,66 @@ class Matchup(object):
         self.RosterId = rosterId
         self.OpponentRosterId = opponentRosterId
 
+# Represents a Fantasy Football team.
+class Team(object):
+    Name = None
+    RosterId = 0
+    OwnerId = 0
+    Wins = 0
+    PlayoffScenarios = 0
+
+    # Initializes a new instance of the class.
+    def __init__(self, rosterId, owner_id, wins):
+        self.Name = None
+        self.RosterId = rosterId
+        self.OwnerId = owner_id
+        self.Wins = wins
+        self.PlayoffScenarios = 0
+
 #-------------------------------------------------
 # Functions
 #-------------------------------------------------
+
+# Import the league settings from the Sleeper API.
+def ImportLeagueSettings(league_id):
+    league = League(league_id)
+    sleeper_league = GetLeague(league_id)
+    league.CurrentWeek = sleeper_league["settings"]["leg"]
+    league.PlayoffWeekStart = sleeper_league["settings"]["playoff_week_start"]
+    league.LastWeekOfRegularSeason = sleeper_league["settings"]["playoff_week_start"]-1
+    league.NumberOfPlayoffTeams = sleeper_league["settings"]["playoff_teams"]
+    league.NumberOfTeams = sleeper_league["total_rosters"]
+    return league
+
+# Import all of the remaining league matchups from the Sleeper API.
+# Sleeper does not give the opponents' roster id, so look through the list to see if the matchup id already exists.
+def ImportMatchups(league_id, starting_week, league_playoff_week_start):
+    matchups = []
+    for week in range(starting_week, league_playoff_week_start+1):
+        for league_matchup in GetLeagueMatchups(league_id, week):
+            index = next((i for i, matchup in enumerate(matchups) if matchup.MatchupId == league_matchup["matchup_id"] and matchup.MatchupPeriod == week), -1)
+            if index > -1:
+                matchups[index].OpponentRosterId = league_matchup["roster_id"]
+            else:
+                matchups.append(Matchup(week, league_matchup["matchup_id"], league_matchup["roster_id"], None))
+    return matchups
+
+# Import all of the league teams from the Sleeper API.
+# Also import the name of the Owner.
+def ImportTeamList(league_id):
+    teams = []
+    league_rosters = GetLeagueRosters(league_id)
+    league_users = GetLeagueUsers(league_id)
+
+    for league_roster in league_rosters:
+        team = Team(league_roster["roster_id"], league_roster["owner_id"], league_roster["settings"]["wins"])
+        teams.append(team)
+
+    for league_user in league_users:
+        index = next((i for i, team in enumerate(teams) if league_user["user_id"] == team.OwnerId), -1)
+        teams[index].Name = league_user["display_name"]
+
+    return teams
 
 # Processes the weekly matchups.
 def ProcessWeeklyMatchups(matchupPeriod):
@@ -63,7 +124,7 @@ def ProcessWeeklyMatchups(matchupPeriod):
                         team_matrix[weeklyMatchups[4].RosterId-1][mp] = 1 if not m else 0
                         team_matrix[weeklyMatchups[4].OpponentRosterId-1][mp] = 0 if not m else 1
 
-                        if (matchupPeriod == league_last_week_of_season):
+                        if (matchupPeriod == league.LastWeekOfRegularSeason):
                             DeterminePlayoffChances()                                
                         else:
                             ProcessWeeklyMatchups(matchupPeriod+1)
@@ -71,11 +132,11 @@ def ProcessWeeklyMatchups(matchupPeriod):
 # Determine the playoff chances in the current scenario.
 def DeterminePlayoffChances():
     result = list(map(sum, team_matrix)) # Sum of wins
-    minimumWins = sorted(result, key=lambda x: x, reverse=True)[int((league_total_rosters/2)-1)]
+    minimumWins = sorted(result, key=lambda x: x, reverse=True)[int((league.NumberOfTeams/2)-1)]
 
-    for i in range(0, league_total_rosters, 1):
+    for i in range(0, league.NumberOfTeams, 1):
         if (result[i] >= minimumWins):
-            playoff_matrix[i] += 1
+            teams[i].PlayoffScenarios += 1
 
 #-------------------------------------------------
 # Functions - Sleeper API
@@ -133,57 +194,36 @@ def GetLeagueUsers(league_id):
 # Main
 #-------------------------------------------------
 
-# Define constants
-league_id = '650414955312558080'
-starting_week = 12
-team_matrix = [[0 for x in range(13)] for y in range(10)] 
-playoff_matrix = [0 for x in range(10)] 
+# Retrieve the league ID.
+league_id = input("Enter your league ID: ")
+if league_id == "":
+    league_id = '650414955312558080'
 
-league = GetLeague(league_id)
-league_playoff_week_start = league["settings"]["playoff_week_start"]
-league_last_week_of_season = league["settings"]["playoff_week_start"]-1
-league_playoff_teams = league["settings"]["playoff_teams"]
-league_total_rosters = int(league["total_rosters"])
+# Retrieve the league settings.
+league = ImportLeagueSettings(league_id)
 
-# Iterate through the remaining weeks and create the matchups.
-# Sleeper does not give the opponents' roster id, so look through the list to see if the matchup id already exists.
-matchups = []
-for week in range(starting_week, league_playoff_week_start):
-    for league_matchup in GetLeagueMatchups(league_id, week):
-        index = next((i for i, matchup in enumerate(matchups) if matchup.MatchupId == league_matchup["matchup_id"] and matchup.MatchupPeriod == week), -1)
-        if index > -1:
-            matchups[index].OpponentRosterId = league_matchup["roster_id"]
-        else:
-            matchups.append(Matchup(week, league_matchup["matchup_id"], league_matchup["roster_id"], None))
-
+# Create the list of matchups.
+matchups = ImportMatchups(league.Id, league.CurrentWeek, league.LastWeekOfRegularSeason)
 
 # Create the list of teams.
-teams = []
-for league_roster in GetLeagueRosters(league_id):
-    team = Team("", league_roster["roster_id"], league_roster["owner_id"])
-    for wins in range (0, league_roster["settings"]["wins"]):
-        team_matrix[league_roster["roster_id"]-1][wins] = 1
-    teams.append(team)
+teams = ImportTeamList(league.Id)
 
-# Retrieve the names for all the teams.
-users = GetLeagueUsers(league_id)
-for user in users:
-    index = next((i for i, team in enumerate(teams) if user["user_id"] == team.OwnerId), -1)
-    teams[index].Name = user["display_name"]
+# Prepare the team matrix.
+team_matrix = [[0 for x in range(13)] for y in range(10)] 
+for team in teams:
+    for i in range (0, team.Wins, 1):
+        team_matrix[team.RosterId-1][i] = 1
 
-# Print the amount of time it should take to run the app.
-scenarios = math.pow(math.pow(2, league_total_rosters/2),((league_playoff_week_start-1)-(starting_week-1))) # 2^(num_teams/2).
-time_per_scenario = 0.00001739501021802425537109375
-print("There are {} scenarios starting in week {}. This will take approx {} seconds (or {} minutes).".format(scenarios, starting_week, scenarios*time_per_scenario, (scenarios*time_per_scenario)/60))
+# Calculate how long it should take to run.
+scenarios = math.pow(math.pow(2, league.NumberOfTeams/2),((league.LastWeekOfRegularSeason)-(league.CurrentWeek-1))) # 2^(num_teams/2).
+time_per_scenario = 0.0000180902084904631972312927246094
+print("There are {} scenarios starting in week {}. This will take approx {} seconds (or {} minutes).".format(scenarios, league.CurrentWeek, scenarios*time_per_scenario, (scenarios*time_per_scenario)/60))
 
-start = time.time()
 # Process all the matchups.
-ProcessWeeklyMatchups(starting_week)
-end = time.time()
-print(end-start)
+ProcessWeeklyMatchups(league.CurrentWeek)
 
 # Print the ordered results.
-for i in range (0, 10, 1):
-    potential_playoff_spot_scenarios = round((playoff_matrix[i]/scenarios)*100, 2)
-    index = next((i for i, team in enumerate(teams) if user["user_id"] == team.OwnerId), -1)
-    print("{} - {}%".format(teams[index].Name, potential_playoff_spot_scenarios))
+for team in sorted(teams, key=lambda x: x.PlayoffScenarios, reverse=True):
+    team_name = team.Name.split(' ')[0]
+    potential_playoff_spot_scenarios = round((team.PlayoffScenarios/scenarios)*100, 2)
+    print("{:<20} {}%".format(team_name, potential_playoff_spot_scenarios))
