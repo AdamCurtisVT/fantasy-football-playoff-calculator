@@ -9,6 +9,18 @@ import time
 # Classes
 #-------------------------------------------------
 
+# Represents a Fantasy Football team.
+class Team(object):
+    Name = None
+    RosterId = 0
+    OwnerId = 0
+
+    # Initializes a new instance of the class.
+    def __init__(self, name, rosterId, owner_id):
+        self.Name = name
+        self.RosterId = rosterId
+        self.OwnerId = owner_id
+
 # Represents a Fantasy Football matchup.
 class Matchup(object):
     MatchupPeriod = 0
@@ -123,7 +135,7 @@ def GetLeagueUsers(league_id):
 
 # Define constants
 league_id = '650414955312558080'
-starting_week =11
+starting_week = 12
 team_matrix = [[0 for x in range(13)] for y in range(10)] 
 playoff_matrix = [0 for x in range(10)] 
 
@@ -146,12 +158,18 @@ for week in range(starting_week, league_playoff_week_start):
 
 
 # Create the list of teams.
+teams = []
 for league_roster in GetLeagueRosters(league_id):
+    team = Team("", league_roster["roster_id"], league_roster["owner_id"])
     for wins in range (0, league_roster["settings"]["wins"]):
         team_matrix[league_roster["roster_id"]-1][wins] = 1
+    teams.append(team)
 
 # Retrieve the names for all the teams.
 users = GetLeagueUsers(league_id)
+for user in users:
+    index = next((i for i, team in enumerate(teams) if user["user_id"] == team.OwnerId), -1)
+    teams[index].Name = user["display_name"]
 
 # Print the amount of time it should take to run the app.
 scenarios = math.pow(math.pow(2, league_total_rosters/2),((league_playoff_week_start-1)-(starting_week-1))) # 2^(num_teams/2).
@@ -167,4 +185,5 @@ print(end-start)
 # Print the ordered results.
 for i in range (0, 10, 1):
     potential_playoff_spot_scenarios = round((playoff_matrix[i]/scenarios)*100, 2)
-    print("{} - {}%".format(users[i]["display_name"], potential_playoff_spot_scenarios))
+    index = next((i for i, team in enumerate(teams) if user["user_id"] == team.OwnerId), -1)
+    print("{} - {}%".format(teams[index].Name, potential_playoff_spot_scenarios))
