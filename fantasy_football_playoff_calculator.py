@@ -209,7 +209,7 @@ matchups = ImportMatchups(league.Id, league.CurrentWeek, league.LastWeekOfRegula
 teams = ImportTeamList(league.Id)
 
 # Prepare the team matrix.
-team_matrix = [[0 for x in range(13)] for y in range(10)] 
+team_matrix = [[0 for x in range(league.LastWeekOfRegularSeason)] for y in range(league.NumberOfTeams)] 
 for team in teams:
     for i in range (0, team.Wins, 1):
         team_matrix[team.RosterId-1][i] = 1
