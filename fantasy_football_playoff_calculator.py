@@ -45,14 +45,16 @@ class Team(object):
     RosterId = 0
     OwnerId = 0
     Wins = 0
+    Losses = 0
     PlayoffScenarios = 0
 
     # Initializes a new instance of the class.
-    def __init__(self, rosterId, owner_id, wins):
+    def __init__(self, rosterId, owner_id, wins, losses):
         self.Name = None
         self.RosterId = rosterId
         self.OwnerId = owner_id
         self.Wins = wins
+        self.Losses = losses
         self.PlayoffScenarios = 0
 
 #-------------------------------------------------
@@ -91,7 +93,7 @@ def ImportTeamList(league_id):
     league_users = GetLeagueUsers(league_id)
 
     for league_roster in league_rosters:
-        team = Team(league_roster["roster_id"], league_roster["owner_id"], league_roster["settings"]["wins"])
+        team = Team(league_roster["roster_id"], league_roster["owner_id"], league_roster["settings"]["wins"], league_roster["settings"]["losses"])
         teams.append(team)
 
     for league_user in league_users:
@@ -214,6 +216,10 @@ for team in teams:
     for i in range (0, team.Wins, 1):
         team_matrix[team.RosterId-1][i] = 1
 
+# Print the current ordered standings.
+for team in sorted(teams, key=lambda x: x.Wins, reverse=True):
+    print("{:<20} {}-{}".format(team.Name, team.Wins, team.Losses))
+
 # Calculate how long it should take to run.
 scenarios = math.pow(math.pow(2, league.NumberOfTeams/2),((league.LastWeekOfRegularSeason)-(league.CurrentWeek-1))) # 2^(num_teams/2).
 time_per_scenario = 0.0000180902084904631972312927246094
@@ -224,6 +230,5 @@ ProcessWeeklyMatchups(league.CurrentWeek)
 
 # Print the ordered results.
 for team in sorted(teams, key=lambda x: x.PlayoffScenarios, reverse=True):
-    team_name = team.Name.split(' ')[0]
     potential_playoff_spot_scenarios = round((team.PlayoffScenarios/scenarios)*100, 2)
-    print("{:<20} {}%".format(team_name, potential_playoff_spot_scenarios))
+    print("{:<20} {}-{} ({}%)".format(team.Name, team.Wins, team.Losses, potential_playoff_spot_scenarios))
