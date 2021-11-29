@@ -1,4 +1,2 @@
 # Fantasy Football Playoff Calculator
-This is a Python script that will enumerate all possible playoff scenarios and print out the percentage where each team makes the playoffs. Since it's running through all possible scenarios it's only useful in the last few weeks.
-
-The script is hard coded for our league format and reads the league data from a database, but it can be changed easily enough to fit different formats.
+This Python script will iterate through all possible playoff scenarios in a given Sleeper league and print out the percentage chance each team has to make the playoffs. Depending on your league size and the week playoffs start, it can take a significant amount of time to run through all the scenarios. In a 10-team league with playoffs starting in week 14, this script completes in a reasonable amount of time starting in week 9.
