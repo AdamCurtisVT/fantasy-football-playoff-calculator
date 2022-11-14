@@ -126,10 +126,14 @@ def ProcessWeeklyMatchups(matchupPeriod):
                         team_matrix[weeklyMatchups[4].RosterId-1][mp] = 1 if not m else 0
                         team_matrix[weeklyMatchups[4].OpponentRosterId-1][mp] = 0 if not m else 1
 
-                        if (matchupPeriod == league.LastWeekOfRegularSeason):
-                            DeterminePlayoffChances()                                
-                        else:
-                            ProcessWeeklyMatchups(matchupPeriod+1)
+                        for n in range(0, 2, 1):
+                            team_matrix[weeklyMatchups[5].RosterId-1][mp] = 1 if not n else 0
+                            team_matrix[weeklyMatchups[5].OpponentRosterId-1][mp] = 0 if not n else 1
+
+                            if (matchupPeriod == league.LastWeekOfRegularSeason):
+                                DeterminePlayoffChances()                                
+                            else:
+                                ProcessWeeklyMatchups(matchupPeriod+1)
 
 # Determine the playoff chances in the current scenario.
 def DeterminePlayoffChances():
@@ -199,7 +203,7 @@ def GetLeagueUsers(league_id):
 # Retrieve the league ID.
 league_id = input("Enter your league ID: ")
 if league_id == "":
-    league_id = '650414955312558080'
+    league_id = '846566237667467264'
 
 # Retrieve the league settings.
 league = ImportLeagueSettings(league_id)
