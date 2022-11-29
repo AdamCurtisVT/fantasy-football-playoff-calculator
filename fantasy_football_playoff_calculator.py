@@ -232,7 +232,10 @@ print("There are {} scenarios starting in week {}. This will take approx {} seco
 # Process all the matchups.
 ProcessWeeklyMatchups(league.CurrentWeek)
 
+# Process the percentage of scenarios where the team made the playoffs.
+for team in teams:
+    team.PlayoffPercentage = round((team.PlayoffScenarios/scenarios)*100, 3)
+
 # Print the ordered results.
-for team in sorted(teams, key=lambda x: x.PlayoffScenarios, reverse=True):
-    potential_playoff_spot_scenarios = round((team.PlayoffScenarios/scenarios)*100, 2)
-    print("{:<20} {}-{} ({}%)".format(team.Name, team.Wins, team.Losses, potential_playoff_spot_scenarios))
+for team in sorted(teams, key=lambda x: (x.Wins, x.PlayoffPercentage), reverse=True):
+    print("{:<20} {}-{} ({}%)".format(team.Name, team.Wins, team.Losses, team.PlayoffPercentage))
