@@ -188,7 +188,7 @@ def GetLeagueUsers(league_id):
 # Retrieve the league ID.
 league_id = input("Enter your league ID: ")
 if league_id == "":
-    league_id = '846566237667467264'
+    league_id = '981569071558832128'
 
 # Retrieve the league settings.
 league = ImportLeagueSettings(league_id)
