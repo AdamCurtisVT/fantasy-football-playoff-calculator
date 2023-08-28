@@ -50,6 +50,7 @@ class Team(object):
     Wins = 0
     Losses = 0
     PlayoffScenarios = 0
+    GuaranteedPlayoffScenarios = 0
 
     # Initializes a new instance of the class.
     def __init__(self, rosterId, owner_id, wins, losses):
@@ -59,6 +60,7 @@ class Team(object):
         self.Wins = wins
         self.Losses = losses
         self.PlayoffScenarios = 0
+        self.GuaranteedPlayoffScenarios = 0
 
 #-------------------------------------------------
 # Functions
@@ -128,6 +130,8 @@ def DeterminePlayoffChances():
     for i in range(0, league.NumberOfTeams, 1):
         if (result[i] >= minimumWins):
             teams[i].PlayoffScenarios += 1
+        if (result[i] > minimumWins):
+            teams[i].GuaranteedPlayoffScenarios += 1
 
 #-------------------------------------------------
 # Functions - Sleeper API
@@ -188,7 +192,7 @@ def GetLeagueUsers(league_id):
 # Retrieve the league ID.
 league_id = input("Enter your league ID: ")
 if league_id == "":
-    league_id = '846566237667467264'
+    league_id = '981569071558832128'
 
 # Retrieve the league settings.
 league = ImportLeagueSettings(league_id)
@@ -226,7 +230,8 @@ if (league.CurrentWeek < league.PlayoffWeekStart):
         # Process the percentage of scenarios where the team made the playoffs.
         for team in teams:
             team.PlayoffPercentage = round((team.PlayoffScenarios/scenarios)*100, 3)
+            team.GuaranteedPlayoffPercentage = round((team.GuaranteedPlayoffScenarios/scenarios)*100, 3)
 
         # Print the ordered results.
         for team in sorted(teams, key=lambda x: (x.Wins, x.PlayoffPercentage), reverse=True):
-            print("{:<20} {}-{} ({}%)".format(team.Name, team.Wins, team.Losses, team.PlayoffPercentage))
+            print("{:<20} {}-{} ({}%) (G: {}%)".format(team.Name, team.Wins, team.Losses, team.PlayoffPercentage, team.GuaranteedPlayoffPercentage))
