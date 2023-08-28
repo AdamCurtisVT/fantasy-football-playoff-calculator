@@ -1,6 +1,7 @@
 #-------------------------------------------------
 # Imports
 #-------------------------------------------------
+import concurrent.futures
 import math
 import requests
 import timeit
@@ -107,18 +108,24 @@ def ImportTeamList(league_id):
 
 # Processes the weekly matchups.
 def ProcessWeeklyMatchups(matchupPeriod):
-    weeklyMatchups = [t for t in matchups if t.MatchupPeriod == matchupPeriod]
-    mp = matchupPeriod - 1
-    
-    for combination in product([0, 1], repeat=len(weeklyMatchups)):
+    def process_combination(combination, weeklyMatchups, mp):
         for idx, match in enumerate(weeklyMatchups):
             team_matrix[match.RosterId - 1][mp] = combination[idx]
             team_matrix[match.OpponentRosterId - 1][mp] = 1 - combination[idx]
-
+            
         if matchupPeriod == league.LastWeekOfRegularSeason:
             DeterminePlayoffChances()
         else:
             ProcessWeeklyMatchups(matchupPeriod + 1)
+
+    weeklyMatchups = [t for t in matchups if t.MatchupPeriod == matchupPeriod]
+    mp = matchupPeriod - 1
+    
+    combinations = list(product([0, 1], repeat=len(weeklyMatchups)))
+    
+    with concurrent.futures.ThreadPoolExecutor() as executor:  # Or ProcessPoolExecutor
+        executor.map(lambda combination: process_combination(combination, weeklyMatchups, mp), combinations)
+
 
 # Determine the playoff chances in the current scenario.
 def DeterminePlayoffChances():
@@ -188,7 +195,7 @@ def GetLeagueUsers(league_id):
 # Retrieve the league ID.
 league_id = input("Enter your league ID: ")
 if league_id == "":
-    league_id = '981569071558832128'
+    league_id = '846566237667467264'
 
 # Retrieve the league settings.
 league = ImportLeagueSettings(league_id)
@@ -205,7 +212,7 @@ for team in teams:
 # Print the current ordered standings.
 for team in sorted(teams, key=lambda x: x.Wins, reverse=True):
     print("{:<20} {}-{}".format(team.Name, team.Wins, team.Losses))
-    
+league.CurrentWeek = 11
 # DO not continue if the playoffs have already started.
 if (league.CurrentWeek < league.PlayoffWeekStart):
     # Create the list of matchups.
