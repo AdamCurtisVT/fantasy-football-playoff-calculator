@@ -3,6 +3,7 @@
 #-------------------------------------------------
 import math
 import requests
+import timeit
 from itertools import product
 
 #-------------------------------------------------
@@ -192,9 +193,6 @@ if league_id == "":
 # Retrieve the league settings.
 league = ImportLeagueSettings(league_id)
 
-# Create the list of matchups.
-matchups = ImportMatchups(league.Id, league.CurrentWeek, league.LastWeekOfRegularSeason)
-
 # Create the list of teams.
 teams = ImportTeamList(league.Id)
 
@@ -207,19 +205,28 @@ for team in teams:
 # Print the current ordered standings.
 for team in sorted(teams, key=lambda x: x.Wins, reverse=True):
     print("{:<20} {}-{}".format(team.Name, team.Wins, team.Losses))
+    
+# DO not continue if the playoffs have already started.
+if (league.CurrentWeek < league.PlayoffWeekStart):
+    # Create the list of matchups.
+    matchups = ImportMatchups(league.Id, league.CurrentWeek, league.LastWeekOfRegularSeason)
 
-# Calculate how long it should take to run.
-scenarios = math.pow(math.pow(2, league.NumberOfTeams/2),((league.LastWeekOfRegularSeason)-(league.CurrentWeek-1))) # 2^(num_teams/2).
-time_per_scenario = 0.0000180902084904631972312927246094
-print("There are {} scenarios starting in week {}. This will take approx {} seconds (or {} minutes).".format(scenarios, league.CurrentWeek, scenarios*time_per_scenario, (scenarios*time_per_scenario)/60))
+    # Do not continue if there are no matchups.
+    if len(matchups) > 0:
+        # Calculate how long it should take to run.
+        scenarios = math.pow(math.pow(2, league.NumberOfTeams/2),((league.LastWeekOfRegularSeason)-(league.CurrentWeek-1))) # 2^(num_teams/2).
+        time_per_scenario = 0.00001507349
+        print("There are {:.0f} scenarios starting in week {}. This will take approx {} seconds (or {} minutes).".format(scenarios, league.CurrentWeek, scenarios*time_per_scenario, (scenarios*time_per_scenario)/60))
 
-# Process all the matchups.
-ProcessWeeklyMatchups(league.CurrentWeek)
+        # Process all the matchups.
+        ProcessWeeklyMatchups(league.CurrentWeek)
+        #elapsed_time = timeit.timeit(lambda: ProcessWeeklyMatchups(league.CurrentWeek), number=1)
+        #print(f"Elapsed time: {elapsed_time:.6f} seconds")    
 
-# Process the percentage of scenarios where the team made the playoffs.
-for team in teams:
-    team.PlayoffPercentage = round((team.PlayoffScenarios/scenarios)*100, 3)
+        # Process the percentage of scenarios where the team made the playoffs.
+        for team in teams:
+            team.PlayoffPercentage = round((team.PlayoffScenarios/scenarios)*100, 3)
 
-# Print the ordered results.
-for team in sorted(teams, key=lambda x: (x.Wins, x.PlayoffPercentage), reverse=True):
-    print("{:<20} {}-{} ({}%)".format(team.Name, team.Wins, team.Losses, team.PlayoffPercentage))
+        # Print the ordered results.
+        for team in sorted(teams, key=lambda x: (x.Wins, x.PlayoffPercentage), reverse=True):
+            print("{:<20} {}-{} ({}%)".format(team.Name, team.Wins, team.Losses, team.PlayoffPercentage))
