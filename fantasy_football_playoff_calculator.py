@@ -3,6 +3,8 @@
 #-------------------------------------------------
 import math
 import requests
+from itertools import product
+
 #-------------------------------------------------
 # Classes
 #-------------------------------------------------
@@ -104,36 +106,18 @@ def ImportTeamList(league_id):
 
 # Processes the weekly matchups.
 def ProcessWeeklyMatchups(matchupPeriod):
-    weeklyMatchups = list(t for t in matchups if t.MatchupPeriod == matchupPeriod)
-    mp = matchupPeriod-1
-    for i in range(0, 2, 1):
-        team_matrix[weeklyMatchups[0].RosterId-1][mp] = 1 if not i else 0
-        team_matrix[weeklyMatchups[0].OpponentRosterId-1][mp] = 0 if not i else 1
+    weeklyMatchups = [t for t in matchups if t.MatchupPeriod == matchupPeriod]
+    mp = matchupPeriod - 1
+    
+    for combination in product([0, 1], repeat=len(weeklyMatchups)):
+        for idx, match in enumerate(weeklyMatchups):
+            team_matrix[match.RosterId - 1][mp] = combination[idx]
+            team_matrix[match.OpponentRosterId - 1][mp] = 1 - combination[idx]
 
-        for j in range(0, 2, 1):
-            team_matrix[weeklyMatchups[1].RosterId-1][mp] = 1 if not j else 0
-            team_matrix[weeklyMatchups[1].OpponentRosterId-1][mp] = 0 if not j else 1
-
-            for k in range(0, 2, 1):
-                team_matrix[weeklyMatchups[2].RosterId-1][mp] = 1 if not k else 0
-                team_matrix[weeklyMatchups[2].OpponentRosterId-1][mp] = 0 if not k else 1
-
-                for l in range(0, 2, 1):
-                    team_matrix[weeklyMatchups[3].RosterId-1][mp] = 1 if not l else 0
-                    team_matrix[weeklyMatchups[3].OpponentRosterId-1][mp] = 0 if not l else 1
-                
-                    for m in range(0, 2, 1):
-                        team_matrix[weeklyMatchups[4].RosterId-1][mp] = 1 if not m else 0
-                        team_matrix[weeklyMatchups[4].OpponentRosterId-1][mp] = 0 if not m else 1
-
-                        for n in range(0, 2, 1):
-                            team_matrix[weeklyMatchups[5].RosterId-1][mp] = 1 if not n else 0
-                            team_matrix[weeklyMatchups[5].OpponentRosterId-1][mp] = 0 if not n else 1
-
-                            if (matchupPeriod == league.LastWeekOfRegularSeason):
-                                DeterminePlayoffChances()                                
-                            else:
-                                ProcessWeeklyMatchups(matchupPeriod+1)
+        if matchupPeriod == league.LastWeekOfRegularSeason:
+            DeterminePlayoffChances()
+        else:
+            ProcessWeeklyMatchups(matchupPeriod + 1)
 
 # Determine the playoff chances in the current scenario.
 def DeterminePlayoffChances():
