@@ -125,16 +125,27 @@ def ProcessWeeklyMatchups(matchupPeriod):
         else:
             ProcessWeeklyMatchups(matchupPeriod + 1)
 
-# Determine the playoff chances in the current scenario.
-def DeterminePlayoffChances():
-    result = list(map(sum, team_matrix)) # Sum of wins
-    minimumWins = sorted(result, key=lambda x: x, reverse=True)[int((league.NumberOfTeams/2)-1)]
 
-    for i in range(0, league.NumberOfTeams, 1):
-        if (result[i] >= minimumWins):
-            teams[i].PlayoffScenarios += 1
-        if (result[i] > minimumWins):
-            teams[i].GuaranteedPlayoffScenarios += 1
+def DeterminePlayoffChances():
+    """
+    Calculate playoff chances for each team based on current standings.
+    Updates the PlayoffScenarios and GuaranteedPlayoffScenarios counters for each team.
+    
+    Uses team_matrix to determine total wins and calculates playoff chances based on league.NumberOfPlayoffTeams teams making the playoffs.
+    """
+    # Calculate total wins for each team
+    total_wins = [sum(row) for row in team_matrix]
+    
+    # Calculate playoff cutoff line (minimum wins needed)
+    playoff_spots = league.NumberOfTeams // 2
+    sorted_wins = sorted(total_wins, reverse=True)
+    playoff_cutoff = sorted_wins[playoff_spots - 1]
+
+    for team_idx, wins in enumerate(total_wins):
+        if wins >= playoff_cutoff:
+            teams[team_idx].PlayoffScenarios += 1
+        if wins > playoff_cutoff:
+            teams[team_idx].GuaranteedPlayoffScenarios += 1
 
 #-------------------------------------------------
 # Functions - Sleeper API
