@@ -54,7 +54,7 @@ class Team(object):
     GuaranteedPlayoffScenarios = 0
 
     # Initializes a new instance of the class.
-    def __init__(self, rosterId, owner_id, wins, losses):
+    def __init__(self, rosterId, owner_id, wins, losses, fantasy_points_for, fantasy_points_against):
         self.Name = None
         self.RosterId = rosterId
         self.OwnerId = owner_id
@@ -62,6 +62,8 @@ class Team(object):
         self.Losses = losses
         self.PlayoffScenarios = 0
         self.GuaranteedPlayoffScenarios = 0
+        self.FantasyPointsFor = fantasy_points_for
+        self.FantasyPointsAgainst = fantasy_points_against
 
 #-------------------------------------------------
 # Functions
@@ -99,7 +101,7 @@ def ImportTeamList(league_id):
     league_users = GetLeagueUsers(league_id)
 
     for league_roster in league_rosters:
-        team = Team(league_roster["roster_id"], league_roster["owner_id"], league_roster["settings"]["wins"], league_roster["settings"]["losses"])
+        team = Team(league_roster["roster_id"], league_roster["owner_id"], league_roster["settings"]["wins"], league_roster["settings"]["losses"], league_roster["settings"]["fpts"], league_roster["settings"]["fpts_against"])
         teams.append(team)
 
     for league_user in league_users:
@@ -231,10 +233,10 @@ if (league.CurrentWeek < league.PlayoffWeekStart):
 
         # Create a list of lists containing the relevant properties
         team_data = [
-            [team.Name, "{}-{}".format(team.Wins, team.Losses), team.GuaranteedPlayoffPercentage, team.PlayoffPercentage]
+            [team.Name, "{}-{}".format(team.Wins, team.Losses), team.FantasyPointsFor, team.FantasyPointsAgainst, team.GuaranteedPlayoffPercentage, team.PlayoffPercentage]
             for team in sorted(teams, key=lambda x: (x.Wins, x.PlayoffPercentage), reverse=True)
         ]
 
         # Define the headers and print the table.
-        headers = ["Name", "Record", "Guaranteed Spot", "Tied For Last Spot Or Better"]
+        headers = ["Name", "Record", "FPF", "FPA", "Guaranteed Spot", "Tied For Cutoff Or Better"]
         print(tabulate(team_data, headers, tablefmt="presto", floatfmt=".2%"))
