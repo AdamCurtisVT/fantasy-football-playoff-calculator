@@ -5,6 +5,7 @@ import math
 import requests
 import timeit
 from itertools import product
+from tabulate import tabulate
 
 #-------------------------------------------------
 # Classes
@@ -205,12 +206,8 @@ team_matrix = [[0 for x in range(league.LastWeekOfRegularSeason)] for y in range
 for team in teams:
     for i in range (0, team.Wins, 1):
         team_matrix[team.RosterId-1][i] = 1
-
-# Print the current ordered standings.
-for team in sorted(teams, key=lambda x: x.Wins, reverse=True):
-    print("{:<20} {}-{}".format(team.Name, team.Wins, team.Losses))
     
-# DO not continue if the playoffs have already started.
+# Do not continue if the playoffs have already started.
 if (league.CurrentWeek < league.PlayoffWeekStart):
     # Create the list of matchups.
     matchups = ImportMatchups(league.Id, league.CurrentWeek, league.LastWeekOfRegularSeason)
@@ -229,9 +226,15 @@ if (league.CurrentWeek < league.PlayoffWeekStart):
 
         # Process the percentage of scenarios where the team made the playoffs.
         for team in teams:
-            team.PlayoffPercentage = round((team.PlayoffScenarios/scenarios)*100, 3)
-            team.GuaranteedPlayoffPercentage = round((team.GuaranteedPlayoffScenarios/scenarios)*100, 3)
+            team.PlayoffPercentage = round((team.PlayoffScenarios/scenarios), 3)
+            team.GuaranteedPlayoffPercentage = round((team.GuaranteedPlayoffScenarios/scenarios), 3)
 
-        # Print the ordered results.
-        for team in sorted(teams, key=lambda x: (x.Wins, x.PlayoffPercentage), reverse=True):
-            print("{:<20} {}-{} ({}%) (G: {}%)".format(team.Name, team.Wins, team.Losses, team.PlayoffPercentage, team.GuaranteedPlayoffPercentage))
+        # Create a list of lists containing the relevant properties
+        team_data = [
+            [team.Name, "{}-{}".format(team.Wins, team.Losses), team.GuaranteedPlayoffPercentage, team.PlayoffPercentage]
+            for team in sorted(teams, key=lambda x: (x.Wins, x.PlayoffPercentage), reverse=True)
+        ]
+
+        # Define the headers and print the table.
+        headers = ["Name", "Record", "Guaranteed Spot", "Tied For Last Spot Or Better"]
+        print(tabulate(team_data, headers, tablefmt="presto", floatfmt=".2%"))
