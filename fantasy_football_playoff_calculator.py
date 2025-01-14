@@ -35,13 +35,15 @@ class Matchup(object):
     MatchupId = 0
     RosterId = None
     OpponentRosterId = None
+    Points = 0
 
     # Initializes a new instance of the class.
-    def __init__(self, matchupPeriod, matchupId, rosterId, opponentRosterId):
+    def __init__(self, matchupPeriod, matchupId, rosterId, opponentRosterId, points):
         self.MatchupPeriod = matchupPeriod
         self.MatchupId = matchupId
         self.RosterId = rosterId
         self.OpponentRosterId = opponentRosterId
+        self.Points = points
 
 # Represents a Fantasy Football team.
 class Team(object):
@@ -90,7 +92,11 @@ def ImportMatchups(league_id, starting_week, league_playoff_week_start):
             if index > -1:
                 matchups[index].OpponentRosterId = league_matchup["roster_id"]
             else:
-                matchups.append(Matchup(week, league_matchup["matchup_id"], league_matchup["roster_id"], None))
+                matchups.append(Matchup(week, league_matchup["matchup_id"], league_matchup["roster_id"], None, league_matchup["points"]))
+            # The Sleeper API does not automatically add Points for any matchups currently in progress, so we need to add it.
+            team = next((t for t in teams if league_matchup["roster_id"] == t.RosterId), None)
+            if team:
+                team.FantasyPointsFor += int(league_matchup["points"])
     return matchups
 
 # Import all of the league teams from the Sleeper API.
@@ -245,7 +251,7 @@ if (league.CurrentWeek < league.PlayoffWeekStart):
         # Create a list of lists containing the relevant properties
         team_data = [
             [team.Name, "{}-{}".format(team.Wins, team.Losses), team.FantasyPointsFor, team.FantasyPointsAgainst, team.GuaranteedPlayoffPercentage, team.PlayoffPercentage]
-            for team in sorted(teams, key=lambda x: (x.Wins, x.PlayoffPercentage), reverse=True)
+            for team in sorted(teams, key=lambda x: (x.Wins, x.PlayoffPercentage, x.FantasyPointsFor), reverse=True)
         ]
 
         # Define the headers and print the table.
