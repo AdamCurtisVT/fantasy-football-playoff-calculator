@@ -33,7 +33,7 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
     console_handler.setFormatter(formatter)
     
     # Create file handler
-    file_handler = logging.FileHandler('playoff_calculator.log', mode='a')
+    file_handler = logging.FileHandler(CONFIG.LOG_FILENAME, mode='a')
     file_handler.setFormatter(formatter)
     
     # Set up logger
@@ -48,6 +48,31 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
     logger.addHandler(file_handler)
     
     return logger
+
+#-------------------------------------------------
+# Configuration
+#-------------------------------------------------
+
+@dataclass
+class Config:
+    """Configuration settings for the playoff calculator."""
+    DEFAULT_LEAGUE_ID: str = '1245761367646937088'
+    TIME_PER_SCENARIO: float = 0.00000213671875
+    MONTE_CARLO_THRESHOLD: float = 100000
+    MAX_SIMULATIONS: int = 500000
+    SIMULATION_PERCENTAGE: float = 0.1
+    MAX_WORKERS: int = 8
+    API_RETRY_ATTEMPTS: int = 3
+    API_RETRY_DELAY: float = 1.0
+    API_BASE_URL: str = 'https://api.sleeper.app/v1'
+    LOG_FILENAME: str = 'playoff_calculator.log'
+    PROGRESS_UPDATE_INTERVAL: int = 100  # Update progress every N scenarios
+    EARLY_PRUNING_THRESHOLD: int = 3  # Enable pruning when <= N weeks remain
+    PROGRESS_DISABLE_THRESHOLD: int = 1000000  # Disable progress bars for very large scenario counts
+
+def get_default_config() -> Config:
+    """Factory function to get default configuration."""
+    return Config()
 
 #-------------------------------------------------
 # Classes
@@ -182,7 +207,7 @@ def ProcessWeeklyMatchups(matchupPeriod: int, teams: List[Team], matchups: List[
             team_matrix[opp_idx][mp] = 1 - win
 
         # Early pruning check - calculate if any teams are mathematically eliminated
-        if remaining_weeks <= 3:  # Only do expensive check near the end
+        if remaining_weeks <= CONFIG.EARLY_PRUNING_THRESHOLD:  # Only do expensive check near the end
             if can_skip_scenario(remaining_weeks, teams, league, team_matrix):
                 continue
 
@@ -217,7 +242,7 @@ def ProcessWeeklyMatchupsWithProgress(matchupPeriod: int, teams: List[Team], mat
             desc=f"Processing Week {matchupPeriod}",
             unit="scenarios",
             file=sys.stdout,
-            disable=total_scenarios > 1000000  # Disable for very large scenario counts
+            disable=total_scenarios > CONFIG.PROGRESS_DISABLE_THRESHOLD  # Disable for very large scenario counts
         )
         if logger:
             logger.info(f"Starting exact calculation for week {matchupPeriod} with {total_scenarios:,} scenarios")
@@ -232,7 +257,7 @@ def ProcessWeeklyMatchupsWithProgress(matchupPeriod: int, teams: List[Team], mat
             team_matrix[opp_idx][mp] = 1 - win
 
         # Early pruning check - calculate if any teams are mathematically eliminated
-        if remaining_weeks <= 3:  # Only do expensive check near the end
+        if remaining_weeks <= CONFIG.EARLY_PRUNING_THRESHOLD:  # Only do expensive check near the end
             if can_skip_scenario(remaining_weeks, teams, league, team_matrix):
                 continue
 
@@ -244,8 +269,8 @@ def ProcessWeeklyMatchupsWithProgress(matchupPeriod: int, teams: List[Team], mat
         # Update progress bar for root call only
         if is_root_call and progress_bar:
             scenarios_processed += 1
-            if scenarios_processed % max(1, total_scenarios // 100) == 0:  # Update every 1%
-                progress_bar.update(max(1, total_scenarios // 100))
+            if scenarios_processed % max(1, total_scenarios // CONFIG.PROGRESS_UPDATE_INTERVAL) == 0:  # Update based on config
+                progress_bar.update(max(1, total_scenarios // CONFIG.PROGRESS_UPDATE_INTERVAL))
     
     # Close progress bar when done with root call
     if is_root_call and progress_bar:
@@ -351,11 +376,11 @@ def MonteCarloSimulation(num_simulations: int, teams: List[Team], matchups: List
         logger.info("Monte Carlo simulation completed")
 
 
-def should_use_monte_carlo(scenarios: float, threshold: float = 100000) -> bool:
+def should_use_monte_carlo(scenarios: float) -> bool:
     """
     Determine whether to use Monte Carlo simulation based on scenario count.
     """
-    return scenarios > threshold
+    return scenarios > CONFIG.MONTE_CARLO_THRESHOLD
 
 
 def parallel_monte_carlo_worker(args) -> tuple:
@@ -483,7 +508,7 @@ def GetLeague(league_id: str) -> Optional[dict]:
     """
     Call the Sleeper API to retrieve all league for a specific user in a season.
     """
-    endpoint = f'https://api.sleeper.app/v1/league/{league_id}'
+    endpoint = f'{CONFIG.API_BASE_URL}/league/{league_id}'
     response = requests.get(endpoint)
     
     if response.status_code == 200:
@@ -496,7 +521,7 @@ def GetLeagueMatchups(league_id: str, week: int) -> Optional[List[dict]]:
     """
     Call the Sleeper API to retrieve all matchups in a league for the specified week.
     """
-    endpoint = f'https://api.sleeper.app/v1/league/{league_id}/matchups/{week}'
+    endpoint = f'{CONFIG.API_BASE_URL}/league/{league_id}/matchups/{week}'
     response = requests.get(endpoint)
     
     if response.status_code == 200:
@@ -512,7 +537,7 @@ def GetLeagueRosters(league_id: str) -> Optional[List[dict]]:
     """
     Call the Sleeper API to retrieve all rosters in a specific league.
     """
-    endpoint = f'https://api.sleeper.app/v1/league/{league_id}/rosters'
+    endpoint = f'{CONFIG.API_BASE_URL}/league/{league_id}/rosters'
     response = requests.get(endpoint)
     
     if response.status_code == 200:
@@ -528,7 +553,7 @@ def GetLeagueUsers(league_id: str) -> Optional[List[dict]]:
     """
     Call the Sleeper API to retrieve all users in a specific league.
     """
-    endpoint = f'https://api.sleeper.app/v1/league/{league_id}/users'
+    endpoint = f'{CONFIG.API_BASE_URL}/league/{league_id}/users'
     response = requests.get(endpoint)
     
     if response.status_code == 200:
@@ -553,7 +578,7 @@ def main():
     # Retrieve the league ID.
     league_id = input("Enter your league ID: ")
     if league_id == "":
-        league_id = '981569071558832128'
+        league_id = CONFIG.DEFAULT_LEAGUE_ID
         logger.info(f"Using default league ID: {league_id}")
 
     logger.info("Starting fantasy football playoff calculator")
@@ -587,14 +612,13 @@ def main():
             
             # Calculate how long it should take to run.
             scenarios = math.pow(math.pow(2, league.number_of_teams/2),((league.last_week_of_regular_season)-(league.current_week-1))) # 2^(num_teams/2).
-            time_per_scenario = 0.00000213671875
             
             logger.info(f"Calculating {scenarios:.0f} total scenarios starting in week {league.current_week}")
             
             # Choose algorithm based on scenario count
             if should_use_monte_carlo(scenarios):
                 logger.info("Using Monte Carlo simulation for faster approximate results...")
-                num_simulations = min(500000, int(scenarios * 0.1))  # Use 10% of scenarios, max 500k
+                num_simulations = min(CONFIG.MAX_SIMULATIONS, int(scenarios * CONFIG.SIMULATION_PERCENTAGE))  # Use config values
                 logger.info(f"Running {num_simulations:,} simulations using {mp.cpu_count()} CPU cores...")
                 
                 start_time = timeit.default_timer()
@@ -607,7 +631,7 @@ def main():
                 logger.info("Results are statistical approximations with ~99% confidence")
                 
             else:  # For smaller scenario counts, use exact calculation
-                logger.info(f"Using exact calculation. Estimated time: {scenarios*time_per_scenario:.1f} seconds")
+                logger.info(f"Using exact calculation. Estimated time: {scenarios*CONFIG.TIME_PER_SCENARIO:.1f} seconds")
                 
                 start_time = timeit.default_timer()
                 ProcessWeeklyMatchupsWithProgress(league.current_week, teams, matchups, league, team_matrix, logger=logger)
@@ -632,7 +656,7 @@ def main():
             headers = ["Name", "Record", "FPF", "FPA", "Guaranteed Spot", "Tied For Cutoff Or Better"]
             
             # Add algorithm info to output
-            if scenarios <= 100000:
+            if scenarios <= CONFIG.MONTE_CARLO_THRESHOLD:
                 algorithm_note = "(Exact calculation)"
             else:
                 algorithm_note = f"(Monte Carlo approximation, {scenarios:,} simulations)"
