@@ -4,69 +4,133 @@
 import math
 import requests
 import timeit
+import random
+import multiprocessing as mp
+import logging
+import sys
+from functools import lru_cache
 from itertools import product
 from tabulate import tabulate
+from dataclasses import dataclass
+from typing import Optional, List
+from tqdm import tqdm
+
+#-------------------------------------------------
+# Logging Setup
+#-------------------------------------------------
+
+def setup_logging(verbose: bool = False) -> logging.Logger:
+    """
+    Set up logging configuration for console output only.
+    """
+    level = logging.DEBUG if verbose else logging.INFO
+    
+    # Create formatter
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    
+    # Create console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    
+    # Set up logger
+    logger = logging.getLogger(__name__)
+    logger.setLevel(level)
+    
+    # Clear existing handlers to avoid duplicates
+    logger.handlers.clear()
+    
+    # Add console handler only
+    logger.addHandler(console_handler)
+    
+    return logger
+
+#-------------------------------------------------
+# Configuration
+#-------------------------------------------------
+
+@dataclass
+class Config:
+    """Configuration settings for the playoff calculator."""
+    DEFAULT_LEAGUE_ID: str = '1245761367646937088'
+    TIME_PER_SCENARIO: float = 0.00000213671875
+    MONTE_CARLO_THRESHOLD: float = 10000000
+    MAX_SIMULATIONS: int = 500000
+    SIMULATION_PERCENTAGE: float = 0.1
+    MAX_WORKERS: int = 8
+    API_RETRY_ATTEMPTS: int = 3
+    API_RETRY_DELAY: float = 1.0
+    API_BASE_URL: str = 'https://api.sleeper.app/v1'
+    PROGRESS_UPDATE_INTERVAL: int = 100  # Update progress every N scenarios
+    EARLY_PRUNING_THRESHOLD: int = 3  # Enable pruning when <= N weeks remain
+
+# Global configuration instance
+CONFIG = Config()
 
 #-------------------------------------------------
 # Classes
 #-------------------------------------------------
 
-class League(object):
+@dataclass
+class League:
     """
     Represents a Fantasy Football league.
     """
-    def __init__(self, id):
-        self.Id = id
-        self.CurrentWeek = 0
-        self.LastWeekOfRegularSeason = 0
-        self.PlayoffWeekStart = 0
-        self.NumberOfTeams = 0
-        self.NumberOfPlayoffTeams = 0
+    id: str
+    current_week: int = 0
+    last_week_of_regular_season: int = 0
+    playoff_week_start: int = 0
+    number_of_teams: int = 0
+    number_of_playoff_teams: int = 0
 
-class Matchup(object):
+@dataclass
+class Matchup:
     """
     Represents a matchup between two teams in a Fantasy Football league.
     """
-    def __init__(self, matchupPeriod, matchupId, rosterId, opponentRosterId):
-        self.MatchupPeriod = matchupPeriod
-        self.MatchupId = matchupId
-        self.RosterId = rosterId
-        self.OpponentRosterId = opponentRosterId
+    matchup_period: int
+    matchup_id: int
+    roster_id: int
+    opponent_roster_id: Optional[int] = None
 
-class Team(object):
+@dataclass
+class Team:
     """
     Represents a Fantasy Football team.
     """
-    def __init__(self, rosterId, owner_id, wins, losses, fantasy_points_for, fantasy_points_against):
-        self.Name = None
-        self.RosterId = rosterId
-        self.OwnerId = owner_id
-        self.Wins = wins
-        self.Losses = losses
-        self.PlayoffScenarios = 0
-        self.GuaranteedPlayoffScenarios = 0
-        self.FantasyPointsFor = fantasy_points_for
-        self.FantasyPointsAgainst = fantasy_points_against
+    roster_id: int
+    owner_id: str
+    wins: int
+    losses: int
+    fantasy_points_for: float
+    fantasy_points_against: float
+    name: Optional[str] = None
+    playoff_scenarios: int = 0
+    guaranteed_playoff_scenarios: int = 0
+    playoff_percentage: float = 0.0
+    guaranteed_playoff_percentage: float = 0.0
 
 #-------------------------------------------------
 # Functions
 #-------------------------------------------------
 
-def ImportLeagueSettings(league_id):
+def ImportLeagueSettings(league_id: str) -> League:
     """
     Import the league settings from the Sleeper API.
     """
-    league = League(league_id)
     sleeper_league = GetLeague(league_id)
-    league.CurrentWeek = sleeper_league["settings"]["leg"]
-    league.PlayoffWeekStart = sleeper_league["settings"]["playoff_week_start"]
-    league.LastWeekOfRegularSeason = sleeper_league["settings"]["playoff_week_start"]-1
-    league.NumberOfPlayoffTeams = sleeper_league["settings"]["playoff_teams"]
-    league.NumberOfTeams = sleeper_league["total_rosters"]
+    
+    league = League(
+        id=league_id,
+        current_week=sleeper_league["settings"]["leg"],
+        playoff_week_start=sleeper_league["settings"]["playoff_week_start"],
+        last_week_of_regular_season=sleeper_league["settings"]["playoff_week_start"]-1,
+        number_of_playoff_teams=sleeper_league["settings"]["playoff_teams"],
+        number_of_teams=sleeper_league["total_rosters"]
+    )
     return league
 
 
-def ImportMatchups(league_id, starting_week, league_playoff_week_start):
+def ImportMatchups(league_id: str, starting_week: int, league_playoff_week_start: int) -> List[Matchup]:
     """
     Import all of the remaining league matchups from the Sleeper API.
     Sleeper does not give the opponents' roster id, so look through the list to see if the matchup id already exists.
@@ -74,14 +138,20 @@ def ImportMatchups(league_id, starting_week, league_playoff_week_start):
     matchups = []
     for week in range(starting_week, league_playoff_week_start+1):
         for league_matchup in GetLeagueMatchups(league_id, week):
-            index = next((i for i, matchup in enumerate(matchups) if matchup.MatchupId == league_matchup["matchup_id"] and matchup.MatchupPeriod == week), -1)
+            index = next((i for i, matchup in enumerate(matchups) 
+                         if matchup.matchup_id == league_matchup["matchup_id"] and matchup.matchup_period == week), -1)
             if index > -1:
-                matchups[index].OpponentRosterId = league_matchup["roster_id"]
+                matchups[index].opponent_roster_id = league_matchup["roster_id"]
             else:
-                matchups.append(Matchup(week, league_matchup["matchup_id"], league_matchup["roster_id"], None))
+                matchups.append(Matchup(
+                    matchup_period=week,
+                    matchup_id=league_matchup["matchup_id"],
+                    roster_id=league_matchup["roster_id"],
+                    opponent_roster_id=None
+                ))
     return matchups
 
-def ImportTeamList(league_id):
+def ImportTeamList(league_id: str) -> List[Team]:
     """
     Import all of the league teams from the Sleeper API.
     Also import the name of the Owner.
@@ -91,70 +161,304 @@ def ImportTeamList(league_id):
     league_users = GetLeagueUsers(league_id)
 
     for league_roster in league_rosters:
-        team = Team(league_roster["roster_id"], league_roster["owner_id"], league_roster["settings"]["wins"], league_roster["settings"]["losses"], league_roster["settings"]["fpts"], league_roster["settings"]["fpts_against"])
+        team = Team(
+            roster_id=league_roster["roster_id"],
+            owner_id=league_roster["owner_id"],
+            wins=league_roster["settings"]["wins"],
+            losses=league_roster["settings"]["losses"],
+            fantasy_points_for=league_roster["settings"]["fpts"],
+            fantasy_points_against=league_roster["settings"]["fpts_against"]
+        )
         teams.append(team)
 
     for league_user in league_users:
-        index = next((i for i, team in enumerate(teams) if league_user["user_id"] == team.OwnerId), -1)
-        teams[index].Name = league_user["display_name"]
+        index = next((i for i, team in enumerate(teams) if league_user["user_id"] == team.owner_id), -1)
+        teams[index].name = league_user["display_name"]
 
     return teams
 
-def ProcessWeeklyMatchups(matchupPeriod):
+def ProcessWeeklyMatchups(matchupPeriod: int, teams: List[Team], matchups: List[Matchup], league: League, team_matrix: List[List[int]]) -> None:
     """
     Process all possible outcomes for the given matchup period.
     """
-    weeklyMatchups = [t for t in matchups if t.MatchupPeriod == matchupPeriod]
+    weeklyMatchups = [t for t in matchups if t.matchup_period == matchupPeriod]
     mp = matchupPeriod - 1
     
     # Pre-compute roster indices to avoid repeated lookups
-    roster_indices = [(match.RosterId - 1, match.OpponentRosterId - 1) for match in weeklyMatchups]
-
+    roster_indices = [(match.roster_id - 1, match.opponent_roster_id - 1) for match in weeklyMatchups]
+    
     for combination in product([0, 1], repeat=len(weeklyMatchups)):
-        # Process all matches at once with fewer operations
+        # Apply combination to team matrix
         for idx, (team_idx, opp_idx) in enumerate(roster_indices):
             win = combination[idx]
             team_matrix[team_idx][mp] = win
             team_matrix[opp_idx][mp] = 1 - win
 
-        if matchupPeriod == league.LastWeekOfRegularSeason:
-            DeterminePlayoffChances()
+        if matchupPeriod == league.last_week_of_regular_season:
+            DeterminePlayoffChances(teams, league, team_matrix)
         else:
-            ProcessWeeklyMatchups(matchupPeriod + 1)
+            ProcessWeeklyMatchups(matchupPeriod + 1, teams, matchups, league, team_matrix)
 
 
-def DeterminePlayoffChances():
+def ProcessWeeklyMatchupsWithProgress(matchupPeriod: int, teams: List[Team], matchups: List[Matchup], 
+                                    league: League, team_matrix: List[List[int]], 
+                                    progress_bar: Optional[tqdm] = None, logger: Optional[logging.Logger] = None) -> None:
+    """
+    Process all possible outcomes for the given matchup period with progress tracking.
+    """
+    weeklyMatchups = [t for t in matchups if t.matchup_period == matchupPeriod]
+    mp = matchupPeriod - 1
+    
+    # Pre-compute roster indices to avoid repeated lookups
+    roster_indices = [(match.roster_id - 1, match.opponent_roster_id - 1) for match in weeklyMatchups]
+    
+    # Create progress bar for the initial call
+    is_root_call = progress_bar is None and matchupPeriod == league.current_week
+    if is_root_call:
+        total_scenarios = 2 ** len(weeklyMatchups)
+        progress_bar = tqdm(
+            total=total_scenarios,
+            desc=f"Processing Week {matchupPeriod}",
+            unit="scenarios",
+            file=sys.stdout,
+            disable=total_scenarios > CONFIG.MONTE_CARLO_THRESHOLD
+        )
+        if logger:
+            logger.info(f"Starting exact calculation for week {matchupPeriod} with {total_scenarios:,} scenarios")
+    
+    scenarios_processed = 0
+    
+    for combination in product([0, 1], repeat=len(weeklyMatchups)):
+        # Apply combination to team matrix
+        for idx, (team_idx, opp_idx) in enumerate(roster_indices):
+            win = combination[idx]
+            team_matrix[team_idx][mp] = win
+            team_matrix[opp_idx][mp] = 1 - win
+
+        if matchupPeriod == league.last_week_of_regular_season:
+            DeterminePlayoffChances(teams, league, team_matrix)
+        else:
+            ProcessWeeklyMatchupsWithProgress(matchupPeriod + 1, teams, matchups, league, team_matrix, progress_bar, logger)
+        
+        # Update progress bar for root call only
+        if is_root_call and progress_bar:
+            scenarios_processed += 1
+            if scenarios_processed % max(1, total_scenarios // CONFIG.PROGRESS_UPDATE_INTERVAL) == 0:  # Update based on config
+                progress_bar.update(max(1, total_scenarios // CONFIG.PROGRESS_UPDATE_INTERVAL))
+    
+    # Close progress bar when done with root call
+    if is_root_call and progress_bar:
+        progress_bar.close()
+        if logger:
+            logger.info(f"Completed exact calculation for week {matchupPeriod}")
+
+
+def MonteCarloSimulation(num_simulations: int, teams: List[Team], matchups: List[Matchup], league: League, logger: Optional[logging.Logger] = None) -> None:
+    """
+    Use Monte Carlo simulation for faster approximate results when scenarios are too numerous.
+    """
+    # Reset scenario counters
+    for team in teams:
+        team.playoff_scenarios = 0
+        team.guaranteed_playoff_scenarios = 0
+    
+    remaining_matchups = [m for m in matchups if m.matchup_period >= league.current_week]
+    
+    if logger:
+        logger.info(f"Starting Monte Carlo simulation with {num_simulations:,} simulations")
+    
+    # Create progress bar for Monte Carlo simulation
+    with tqdm(total=num_simulations, desc="Monte Carlo Simulation", unit="sims", file=sys.stdout) as pbar:
+        for simulation in range(num_simulations):
+            # Create a copy of current wins for this simulation
+            sim_wins = [team.wins for team in teams]
+            
+            # Randomly decide outcomes for remaining matchups
+            for matchup in remaining_matchups:
+                winner = random.choice([matchup.roster_id, matchup.opponent_roster_id])
+                if winner == matchup.roster_id:
+                    sim_wins[matchup.roster_id - 1] += 1
+                else:
+                    sim_wins[matchup.opponent_roster_id - 1] += 1
+            
+            # Calculate playoff teams for this simulation
+            team_records = [(i, wins) for i, wins in enumerate(sim_wins)]
+            team_records.sort(key=lambda x: x[1], reverse=True)
+            
+            # Handle ties more accurately by using points for as tiebreaker
+            tied_groups = []
+            current_wins = team_records[0][1]
+            current_group = [team_records[0]]
+            
+            for i in range(1, len(team_records)):
+                if team_records[i][1] == current_wins:
+                    current_group.append(team_records[i])
+                else:
+                    tied_groups.append(current_group)
+                    current_wins = team_records[i][1]
+                    current_group = [team_records[i]]
+            tied_groups.append(current_group)
+            
+            # Resolve ties using points for
+            final_rankings = []
+            for group in tied_groups:
+                if len(group) > 1:
+                    # Sort by points for within tied group
+                    group.sort(key=lambda x: teams[x[0]].fantasy_points_for, reverse=True)
+                final_rankings.extend([team_idx for team_idx, _ in group])
+            
+            # Count playoff scenarios
+            playoff_cutoff = min(league.number_of_playoff_teams, len(final_rankings))
+            cutoff_wins = sim_wins[final_rankings[playoff_cutoff-1]] if playoff_cutoff > 0 else 0
+            
+            for i in range(playoff_cutoff):
+                team_idx = final_rankings[i]
+                teams[team_idx].playoff_scenarios += 1
+                
+                # Guaranteed spot if wins are higher than cutoff
+                if sim_wins[team_idx] > cutoff_wins:
+                    teams[team_idx].guaranteed_playoff_scenarios += 1
+            
+            # Update progress bar
+            pbar.update(1)
+    
+    if logger:
+        logger.info("Monte Carlo simulation completed")
+
+
+def should_use_monte_carlo(scenarios: float) -> bool:
+    """
+    Determine whether to use Monte Carlo simulation based on scenario count.
+    """
+    return scenarios > CONFIG.MONTE_CARLO_THRESHOLD
+
+
+def parallel_monte_carlo_worker(args) -> tuple:
+    """
+    Worker function for parallel Monte Carlo simulation.
+    """
+    simulations_per_worker, remaining_matchups, teams_data, league_data = args
+    
+    # Initialize local counters
+    local_playoff_scenarios = [0] * len(teams_data)
+    local_guaranteed_scenarios = [0] * len(teams_data)
+    
+    for _ in range(simulations_per_worker):
+        # Create simulation wins
+        sim_wins = [team['wins'] for team in teams_data]
+        
+        # Randomly decide outcomes
+        for matchup in remaining_matchups:
+            winner = random.choice([matchup['roster_id'], matchup['opponent_roster_id']])
+            if winner == matchup['roster_id']:
+                sim_wins[matchup['roster_id'] - 1] += 1
+            else:
+                sim_wins[matchup['opponent_roster_id'] - 1] += 1
+        
+        # Calculate rankings with tiebreaker
+        team_records = [(i, wins, teams_data[i]['fantasy_points_for']) for i, wins in enumerate(sim_wins)]
+        team_records.sort(key=lambda x: (x[1], x[2]), reverse=True)
+        
+        # Count playoff scenarios
+        playoff_cutoff = min(league_data['number_of_playoff_teams'], len(team_records))
+        cutoff_wins = team_records[playoff_cutoff-1][1] if playoff_cutoff > 0 else 0
+        
+        for i in range(playoff_cutoff):
+            team_idx = team_records[i][0]
+            local_playoff_scenarios[team_idx] += 1
+            
+            if sim_wins[team_idx] > cutoff_wins:
+                local_guaranteed_scenarios[team_idx] += 1
+    
+    return local_playoff_scenarios, local_guaranteed_scenarios
+
+
+def parallel_monte_carlo_simulation(num_simulations: int, teams: List[Team], matchups: List[Matchup], league: League) -> None:
+    """
+    Parallel Monte Carlo simulation using multiple CPU cores.
+    """
+    # Reset counters
+    for team in teams:
+        team.playoff_scenarios = 0
+        team.guaranteed_playoff_scenarios = 0
+    
+    # Prepare data for workers
+    remaining_matchups = [
+        {
+            'roster_id': m.roster_id,
+            'opponent_roster_id': m.opponent_roster_id,
+            'matchup_period': m.matchup_period
+        }
+        for m in matchups if m.matchup_period >= league.current_week
+    ]
+    
+    teams_data = [
+        {
+            'wins': team.wins,
+            'fantasy_points_for': team.fantasy_points_for
+        }
+        for team in teams
+    ]
+    
+    league_data = {
+        'number_of_playoff_teams': league.number_of_playoff_teams,
+        'current_week': league.current_week
+    }
+    
+    # Determine number of workers and simulations per worker
+    num_workers = min(mp.cpu_count(), 8)  # Cap at 8 to avoid overhead
+    simulations_per_worker = num_simulations // num_workers
+    
+    # Create worker arguments
+    worker_args = [
+        (simulations_per_worker, remaining_matchups, teams_data, league_data)
+        for _ in range(num_workers)
+    ]
+    
+    # Run parallel simulation
+    with mp.Pool(num_workers) as pool:
+        results = pool.map(parallel_monte_carlo_worker, worker_args)
+    
+    # Aggregate results
+    for playoff_scenarios, guaranteed_scenarios in results:
+        for i in range(len(teams)):
+            teams[i].playoff_scenarios += playoff_scenarios[i]
+            teams[i].guaranteed_playoff_scenarios += guaranteed_scenarios[i]
+
+
+def DeterminePlayoffChances(teams: List[Team], league: League, team_matrix: List[List[int]]) -> None:
     """
     Calculate playoff chances with optimized sorting approach.
     """
     # Calculate total wins for each team - keep track of team index
-    team_wins = [(team_idx, team.Wins + sum(team_matrix[team_idx][league.CurrentWeek-1:])) 
+    team_wins = [(team_idx, team.wins + sum(team_matrix[team_idx][league.current_week-1:])) 
                  for team_idx, team in enumerate(teams)]
     
     # Sort by wins in descending order
     team_wins.sort(key=lambda x: x[1], reverse=True)
     
     # Find cutoff (without sorting twice)
-    playoff_spots = league.NumberOfPlayoffTeams
+    playoff_spots = league.number_of_playoff_teams
     if playoff_spots <= len(team_wins):
         cutoff_wins = team_wins[playoff_spots-1][1]
         
         # Update scenarios in a single pass
         for team_idx, wins in team_wins:
             if wins >= cutoff_wins:
-                teams[team_idx].PlayoffScenarios += 1
+                teams[team_idx].playoff_scenarios += 1
             if wins > cutoff_wins:
-                teams[team_idx].GuaranteedPlayoffScenarios += 1
+                teams[team_idx].guaranteed_playoff_scenarios += 1
 
 #-------------------------------------------------
 # Functions - Sleeper API
 #-------------------------------------------------
 
-def GetLeague(league_id):
+@lru_cache(maxsize=128)
+def GetLeague(league_id: str) -> Optional[dict]:
     """
     Call the Sleeper API to retrieve all league for a specific user in a season.
     """
-    endpoint = ('https://api.sleeper.app/v1/league/{}'.format(league_id))
+    endpoint = f'{CONFIG.API_BASE_URL}/league/{league_id}'
     response = requests.get(endpoint)
     
     if response.status_code == 200:
@@ -162,11 +466,12 @@ def GetLeague(league_id):
     else:
         return None
 
-def GetLeagueMatchups(league_id, week):
+@lru_cache(maxsize=128)
+def GetLeagueMatchups(league_id: str, week: int) -> Optional[List[dict]]:
     """
     Call the Sleeper API to retrieve all matchups in a league for the specified week.
     """
-    endpoint = ('https://api.sleeper.app/v1/league/{}/matchups/{}'.format(league_id, week))
+    endpoint = f'{CONFIG.API_BASE_URL}/league/{league_id}/matchups/{week}'
     response = requests.get(endpoint)
     
     if response.status_code == 200:
@@ -177,11 +482,12 @@ def GetLeagueMatchups(league_id, week):
     else:
         return None
 
-def GetLeagueRosters(league_id):
+@lru_cache(maxsize=128)
+def GetLeagueRosters(league_id: str) -> Optional[List[dict]]:
     """
     Call the Sleeper API to retrieve all rosters in a specific league.
     """
-    endpoint = ('https://api.sleeper.app/v1/league/{}/rosters'.format(league_id))
+    endpoint = f'{CONFIG.API_BASE_URL}/league/{league_id}/rosters'
     response = requests.get(endpoint)
     
     if response.status_code == 200:
@@ -192,11 +498,12 @@ def GetLeagueRosters(league_id):
     else:
         return None
 
-def GetLeagueUsers(league_id):
+@lru_cache(maxsize=128)
+def GetLeagueUsers(league_id: str) -> Optional[List[dict]]:
     """
     Call the Sleeper API to retrieve all users in a specific league.
     """
-    endpoint = ('https://api.sleeper.app/v1/league/{}/users'.format(league_id))
+    endpoint = f'{CONFIG.API_BASE_URL}/league/{league_id}/users'
     response = requests.get(endpoint)
     
     if response.status_code == 200:
@@ -211,51 +518,108 @@ def GetLeagueUsers(league_id):
 # Main
 #-------------------------------------------------
 
-# Retrieve the league ID.
-league_id = input("Enter your league ID: ")
-if league_id == "":
-    league_id = '981569071558832128'
+def main():
+    """
+    Main execution function for the playoff calculator.
+    """
+    # Set up logging
+    logger = setup_logging()
+    
+    # Retrieve the league ID.
+    league_id = input("Enter your league ID: ")
+    if league_id == "":
+        league_id = CONFIG.DEFAULT_LEAGUE_ID
+        logger.info(f"Using default league ID: {league_id}")
 
-# Retrieve the league settings.
-league = ImportLeagueSettings(league_id)
+    logger.info("Starting fantasy football playoff calculator")
+    logger.info(f"Processing league ID: {league_id}")
 
-# Create the list of teams.
-teams = ImportTeamList(league.Id)
+    # Retrieve the league settings.
+    logger.info("Importing league settings...")
+    league = ImportLeagueSettings(league_id)
+    logger.info(f"League: {league.number_of_teams} teams, playoffs start week {league.playoff_week_start}")
 
-# Prepare the team matrix.
-team_matrix = [[0 for x in range(league.LastWeekOfRegularSeason)] for y in range(league.NumberOfTeams)] 
-for team in teams:
-    for i in range (0, team.Wins, 1):
-        team_matrix[team.RosterId-1][i] = 1
+    # Create the list of teams.
+    logger.info("Importing team data...")
+    teams = ImportTeamList(league.id)
+    logger.info(f"Loaded {len(teams)} teams")
 
-# Do not continue if the playoffs have already started.
-if (league.CurrentWeek < league.PlayoffWeekStart):
-    # Create the list of matchups.
-    matchups = ImportMatchups(league.Id, league.CurrentWeek, league.LastWeekOfRegularSeason)
+    # Prepare the team matrix.
+    team_matrix = [[0 for x in range(league.last_week_of_regular_season)] for y in range(league.number_of_teams)] 
+    for team in teams:
+        for i in range (0, team.wins, 1):
+            team_matrix[team.roster_id-1][i] = 1
 
-    # Do not continue if there are no matchups.
-    if len(matchups) > 0:
-        # Calculate how long it should take to run.
-        scenarios = math.pow(math.pow(2, league.NumberOfTeams/2),((league.LastWeekOfRegularSeason)-(league.CurrentWeek-1))) # 2^(num_teams/2).
-        time_per_scenario = 0.00000213671875
-        print("There are {:.0f} scenarios starting in week {}. This will take approx {} seconds (or {} minutes).".format(scenarios, league.CurrentWeek, scenarios*time_per_scenario, (scenarios*time_per_scenario)/60))
+    # Do not continue if the playoffs have already started.
+    if (league.current_week < league.playoff_week_start):
+        # Create the list of matchups.
+        logger.info("Importing remaining matchups...")
+        matchups = ImportMatchups(league.id, league.current_week, league.last_week_of_regular_season)
 
-        # Process all the matchups.
-        #ProcessWeeklyMatchups(league.CurrentWeek)
-        elapsed_time = timeit.timeit(lambda: ProcessWeeklyMatchups(league.CurrentWeek), number=1)
-        print(f"Elapsed time: {elapsed_time:.6f} seconds")    
+        # Do not continue if there are no matchups.
+        if len(matchups) > 0:
+            logger.info(f"Found {len(matchups)} remaining matchups")
+            
+            # Calculate how long it should take to run.
+            scenarios = math.pow(math.pow(2, league.number_of_teams/2),((league.last_week_of_regular_season)-(league.current_week-1))) # 2^(num_teams/2).
+            
+            logger.info(f"Calculating {scenarios:.0f} total scenarios starting in week {league.current_week}")
+            
+            # Choose algorithm based on scenario count
+            if should_use_monte_carlo(scenarios):
+                logger.info("Using Monte Carlo simulation for faster approximate results...")
+                num_simulations = min(CONFIG.MAX_SIMULATIONS, int(scenarios * CONFIG.SIMULATION_PERCENTAGE))  # Use config values
+                logger.info(f"Running {num_simulations:,} simulations using {mp.cpu_count()} CPU cores...")
+                
+                start_time = timeit.default_timer()
+                parallel_monte_carlo_simulation(num_simulations, teams, matchups, league)
+                elapsed_time = timeit.default_timer() - start_time
+                
+                # Update scenarios count for percentage calculation
+                scenarios = num_simulations
+                logger.info(f"Monte Carlo simulation completed in {elapsed_time:.2f} seconds")
+                logger.info("Results are statistical approximations with ~99% confidence")
+                
+            else:  # For smaller scenario counts, use exact calculation
+                logger.info(f"Using exact calculation. Estimated time: {scenarios*CONFIG.TIME_PER_SCENARIO:.1f} seconds")
+                
+                start_time = timeit.default_timer()
+                ProcessWeeklyMatchupsWithProgress(league.current_week, teams, matchups, league, team_matrix, logger=logger)
+                elapsed_time = timeit.default_timer() - start_time
+                
+                logger.info(f"Exact calculation completed in {elapsed_time:.2f} seconds")
 
-        # Process the percentage of scenarios where the team made the playoffs.
-        for team in teams:
-            team.PlayoffPercentage = round((team.PlayoffScenarios/scenarios), 3)
-            team.GuaranteedPlayoffPercentage = round((team.GuaranteedPlayoffScenarios/scenarios), 3)
+            # Process the percentage of scenarios where the team made the playoffs.
+            logger.info("Calculating final playoff percentages...")
+            for team in teams:
+                team.playoff_percentage = round((team.playoff_scenarios/scenarios), 3)
+                team.guaranteed_playoff_percentage = round((team.guaranteed_playoff_scenarios/scenarios), 3)
 
-        # Create a list of lists containing the relevant properties
-        team_data = [
-            [team.Name, "{}-{}".format(team.Wins, team.Losses), team.FantasyPointsFor, team.FantasyPointsAgainst, team.GuaranteedPlayoffPercentage, team.PlayoffPercentage]
-            for team in sorted(teams, key=lambda x: (x.Wins, x.PlayoffPercentage), reverse=True)
-        ]
+            # Create a list of lists containing the relevant properties
+            logger.info("Generating results table...")
+            team_data = [
+                [team.name, f"{team.wins}-{team.losses}", team.fantasy_points_for, team.fantasy_points_against, team.guaranteed_playoff_percentage, team.playoff_percentage]
+                for team in sorted(teams, key=lambda x: (x.wins, x.playoff_percentage), reverse=True)
+            ]
 
-        # Define the headers and print the table.
-        headers = ["Name", "Record", "FPF", "FPA", "Guaranteed Spot", "Tied For Cutoff Or Better"]
-        print(tabulate(team_data, headers, tablefmt="presto", floatfmt=".2%"))
+            # Define the headers and print the table.
+            headers = ["Name", "Record", "FPF", "FPA", "Guaranteed Spot", "Tied For Cutoff Or Better"]
+            
+            # Add algorithm info to output
+            if scenarios <= CONFIG.MONTE_CARLO_THRESHOLD:
+                algorithm_note = "(Exact calculation)"
+            else:
+                algorithm_note = f"(Monte Carlo approximation, {scenarios:,} simulations)"
+                
+            print(f"\nPlayoff Probabilities {algorithm_note}:")
+            print(tabulate(team_data, headers, tablefmt="presto", floatfmt=".2%"))
+            
+            logger.info("Playoff calculation completed successfully")
+        else:
+            logger.warning("No remaining matchups found")
+    else:
+        logger.warning("Playoffs have already started - no calculations needed")
+
+
+if __name__ == "__main__":
+    main()
