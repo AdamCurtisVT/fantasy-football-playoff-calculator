@@ -6,11 +6,48 @@ import requests
 import timeit
 import random
 import multiprocessing as mp
+import logging
+import sys
 from functools import lru_cache
 from itertools import product
 from tabulate import tabulate
 from dataclasses import dataclass
 from typing import Optional, List
+from tqdm import tqdm
+
+#-------------------------------------------------
+# Logging Setup
+#-------------------------------------------------
+
+def setup_logging(verbose: bool = False) -> logging.Logger:
+    """
+    Set up logging configuration.
+    """
+    level = logging.DEBUG if verbose else logging.INFO
+    
+    # Create formatter
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    
+    # Create console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    
+    # Create file handler
+    file_handler = logging.FileHandler('playoff_calculator.log', mode='a')
+    file_handler.setFormatter(formatter)
+    
+    # Set up logger
+    logger = logging.getLogger(__name__)
+    logger.setLevel(level)
+    
+    # Clear existing handlers to avoid duplicates
+    logger.handlers.clear()
+    
+    # Add handlers
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+    
+    return logger
 
 #-------------------------------------------------
 # Classes
@@ -155,6 +192,68 @@ def ProcessWeeklyMatchups(matchupPeriod: int, teams: List[Team], matchups: List[
             ProcessWeeklyMatchups(matchupPeriod + 1, teams, matchups, league, team_matrix)
 
 
+def ProcessWeeklyMatchupsWithProgress(matchupPeriod: int, teams: List[Team], matchups: List[Matchup], 
+                                    league: League, team_matrix: List[List[int]], 
+                                    progress_bar: Optional[tqdm] = None, logger: Optional[logging.Logger] = None) -> None:
+    """
+    Process all possible outcomes for the given matchup period with progress tracking.
+    """
+    weeklyMatchups = [t for t in matchups if t.matchup_period == matchupPeriod]
+    mp = matchupPeriod - 1
+    
+    # Pre-compute roster indices to avoid repeated lookups
+    roster_indices = [(match.roster_id - 1, match.opponent_roster_id - 1) for match in weeklyMatchups]
+
+    # Early pruning: if some teams are already mathematically eliminated or guaranteed,
+    # we can skip some combinations
+    remaining_weeks = league.last_week_of_regular_season - matchupPeriod + 1
+    
+    # Create progress bar for the initial call
+    is_root_call = progress_bar is None and matchupPeriod == league.current_week
+    if is_root_call:
+        total_scenarios = 2 ** len(weeklyMatchups)
+        progress_bar = tqdm(
+            total=total_scenarios,
+            desc=f"Processing Week {matchupPeriod}",
+            unit="scenarios",
+            file=sys.stdout,
+            disable=total_scenarios > 1000000  # Disable for very large scenario counts
+        )
+        if logger:
+            logger.info(f"Starting exact calculation for week {matchupPeriod} with {total_scenarios:,} scenarios")
+    
+    scenarios_processed = 0
+    
+    for combination in product([0, 1], repeat=len(weeklyMatchups)):
+        # Apply combination to team matrix
+        for idx, (team_idx, opp_idx) in enumerate(roster_indices):
+            win = combination[idx]
+            team_matrix[team_idx][mp] = win
+            team_matrix[opp_idx][mp] = 1 - win
+
+        # Early pruning check - calculate if any teams are mathematically eliminated
+        if remaining_weeks <= 3:  # Only do expensive check near the end
+            if can_skip_scenario(remaining_weeks, teams, league, team_matrix):
+                continue
+
+        if matchupPeriod == league.last_week_of_regular_season:
+            DeterminePlayoffChances(teams, league, team_matrix)
+        else:
+            ProcessWeeklyMatchupsWithProgress(matchupPeriod + 1, teams, matchups, league, team_matrix, progress_bar, logger)
+        
+        # Update progress bar for root call only
+        if is_root_call and progress_bar:
+            scenarios_processed += 1
+            if scenarios_processed % max(1, total_scenarios // 100) == 0:  # Update every 1%
+                progress_bar.update(max(1, total_scenarios // 100))
+    
+    # Close progress bar when done with root call
+    if is_root_call and progress_bar:
+        progress_bar.close()
+        if logger:
+            logger.info(f"Completed exact calculation for week {matchupPeriod}")
+
+
 def can_skip_scenario(remaining_weeks: int, teams: List[Team], league: League, team_matrix: List[List[int]]) -> bool:
     """
     Determine if we can skip this scenario based on mathematical impossibilities.
@@ -179,7 +278,7 @@ def can_skip_scenario(remaining_weeks: int, teams: List[Team], league: League, t
     return False
 
 
-def MonteCarloSimulation(num_simulations: int, teams: List[Team], matchups: List[Matchup], league: League) -> None:
+def MonteCarloSimulation(num_simulations: int, teams: List[Team], matchups: List[Matchup], league: League, logger: Optional[logging.Logger] = None) -> None:
     """
     Use Monte Carlo simulation for faster approximate results when scenarios are too numerous.
     """
@@ -190,55 +289,66 @@ def MonteCarloSimulation(num_simulations: int, teams: List[Team], matchups: List
     
     remaining_matchups = [m for m in matchups if m.matchup_period >= league.current_week]
     
-    for simulation in range(num_simulations):
-        # Create a copy of current wins for this simulation
-        sim_wins = [team.wins for team in teams]
-        
-        # Randomly decide outcomes for remaining matchups
-        for matchup in remaining_matchups:
-            winner = random.choice([matchup.roster_id, matchup.opponent_roster_id])
-            if winner == matchup.roster_id:
-                sim_wins[matchup.roster_id - 1] += 1
-            else:
-                sim_wins[matchup.opponent_roster_id - 1] += 1
-        
-        # Calculate playoff teams for this simulation
-        team_records = [(i, wins) for i, wins in enumerate(sim_wins)]
-        team_records.sort(key=lambda x: x[1], reverse=True)
-        
-        # Handle ties more accurately by using points for as tiebreaker
-        tied_groups = []
-        current_wins = team_records[0][1]
-        current_group = [team_records[0]]
-        
-        for i in range(1, len(team_records)):
-            if team_records[i][1] == current_wins:
-                current_group.append(team_records[i])
-            else:
-                tied_groups.append(current_group)
-                current_wins = team_records[i][1]
-                current_group = [team_records[i]]
-        tied_groups.append(current_group)
-        
-        # Resolve ties using points for
-        final_rankings = []
-        for group in tied_groups:
-            if len(group) > 1:
-                # Sort by points for within tied group
-                group.sort(key=lambda x: teams[x[0]].fantasy_points_for, reverse=True)
-            final_rankings.extend([team_idx for team_idx, _ in group])
-        
-        # Count playoff scenarios
-        playoff_cutoff = min(league.number_of_playoff_teams, len(final_rankings))
-        cutoff_wins = sim_wins[final_rankings[playoff_cutoff-1]] if playoff_cutoff > 0 else 0
-        
-        for i in range(playoff_cutoff):
-            team_idx = final_rankings[i]
-            teams[team_idx].playoff_scenarios += 1
+    if logger:
+        logger.info(f"Starting Monte Carlo simulation with {num_simulations:,} simulations")
+    
+    # Create progress bar for Monte Carlo simulation
+    with tqdm(total=num_simulations, desc="Monte Carlo Simulation", unit="sims", file=sys.stdout) as pbar:
+        for simulation in range(num_simulations):
+            # Create a copy of current wins for this simulation
+            sim_wins = [team.wins for team in teams]
             
-            # Guaranteed spot if wins are higher than cutoff
-            if sim_wins[team_idx] > cutoff_wins:
-                teams[team_idx].guaranteed_playoff_scenarios += 1
+            # Randomly decide outcomes for remaining matchups
+            for matchup in remaining_matchups:
+                winner = random.choice([matchup.roster_id, matchup.opponent_roster_id])
+                if winner == matchup.roster_id:
+                    sim_wins[matchup.roster_id - 1] += 1
+                else:
+                    sim_wins[matchup.opponent_roster_id - 1] += 1
+            
+            # Calculate playoff teams for this simulation
+            team_records = [(i, wins) for i, wins in enumerate(sim_wins)]
+            team_records.sort(key=lambda x: x[1], reverse=True)
+            
+            # Handle ties more accurately by using points for as tiebreaker
+            tied_groups = []
+            current_wins = team_records[0][1]
+            current_group = [team_records[0]]
+            
+            for i in range(1, len(team_records)):
+                if team_records[i][1] == current_wins:
+                    current_group.append(team_records[i])
+                else:
+                    tied_groups.append(current_group)
+                    current_wins = team_records[i][1]
+                    current_group = [team_records[i]]
+            tied_groups.append(current_group)
+            
+            # Resolve ties using points for
+            final_rankings = []
+            for group in tied_groups:
+                if len(group) > 1:
+                    # Sort by points for within tied group
+                    group.sort(key=lambda x: teams[x[0]].fantasy_points_for, reverse=True)
+                final_rankings.extend([team_idx for team_idx, _ in group])
+            
+            # Count playoff scenarios
+            playoff_cutoff = min(league.number_of_playoff_teams, len(final_rankings))
+            cutoff_wins = sim_wins[final_rankings[playoff_cutoff-1]] if playoff_cutoff > 0 else 0
+            
+            for i in range(playoff_cutoff):
+                team_idx = final_rankings[i]
+                teams[team_idx].playoff_scenarios += 1
+                
+                # Guaranteed spot if wins are higher than cutoff
+                if sim_wins[team_idx] > cutoff_wins:
+                    teams[team_idx].guaranteed_playoff_scenarios += 1
+            
+            # Update progress bar
+            pbar.update(1)
+    
+    if logger:
+        logger.info("Monte Carlo simulation completed")
 
 
 def should_use_monte_carlo(scenarios: float, threshold: float = 100000) -> bool:
@@ -437,16 +547,27 @@ def main():
     """
     Main execution function for the playoff calculator.
     """
+    # Set up logging
+    logger = setup_logging()
+    
     # Retrieve the league ID.
     league_id = input("Enter your league ID: ")
     if league_id == "":
         league_id = '981569071558832128'
+        logger.info(f"Using default league ID: {league_id}")
+
+    logger.info("Starting fantasy football playoff calculator")
+    logger.info(f"Processing league ID: {league_id}")
 
     # Retrieve the league settings.
+    logger.info("Importing league settings...")
     league = ImportLeagueSettings(league_id)
+    logger.info(f"League: {league.number_of_teams} teams, playoffs start week {league.playoff_week_start}")
 
     # Create the list of teams.
+    logger.info("Importing team data...")
     teams = ImportTeamList(league.id)
+    logger.info(f"Loaded {len(teams)} teams")
 
     # Prepare the team matrix.
     team_matrix = [[0 for x in range(league.last_week_of_regular_season)] for y in range(league.number_of_teams)] 
@@ -457,21 +578,24 @@ def main():
     # Do not continue if the playoffs have already started.
     if (league.current_week < league.playoff_week_start):
         # Create the list of matchups.
+        logger.info("Importing remaining matchups...")
         matchups = ImportMatchups(league.id, league.current_week, league.last_week_of_regular_season)
 
         # Do not continue if there are no matchups.
         if len(matchups) > 0:
+            logger.info(f"Found {len(matchups)} remaining matchups")
+            
             # Calculate how long it should take to run.
             scenarios = math.pow(math.pow(2, league.number_of_teams/2),((league.last_week_of_regular_season)-(league.current_week-1))) # 2^(num_teams/2).
             time_per_scenario = 0.00000213671875
             
-            print(f"There are {scenarios:.0f} scenarios starting in week {league.current_week}.")
+            logger.info(f"Calculating {scenarios:.0f} total scenarios starting in week {league.current_week}")
             
             # Choose algorithm based on scenario count
             if should_use_monte_carlo(scenarios):
-                print("Using Monte Carlo simulation for faster approximate results...")
+                logger.info("Using Monte Carlo simulation for faster approximate results...")
                 num_simulations = min(500000, int(scenarios * 0.1))  # Use 10% of scenarios, max 500k
-                print(f"Running {num_simulations:,} simulations using {mp.cpu_count()} CPU cores...")
+                logger.info(f"Running {num_simulations:,} simulations using {mp.cpu_count()} CPU cores...")
                 
                 start_time = timeit.default_timer()
                 parallel_monte_carlo_simulation(num_simulations, teams, matchups, league)
@@ -479,20 +603,26 @@ def main():
                 
                 # Update scenarios count for percentage calculation
                 scenarios = num_simulations
-                print(f"Monte Carlo simulation completed in {elapsed_time:.2f} seconds")
-                print("Note: Results are statistical approximations with ~99% confidence")
+                logger.info(f"Monte Carlo simulation completed in {elapsed_time:.2f} seconds")
+                logger.info("Results are statistical approximations with ~99% confidence")
                 
             else:  # For smaller scenario counts, use exact calculation
-                print(f"Using exact calculation. Estimated time: {scenarios*time_per_scenario:.1f} seconds")
-                elapsed_time = timeit.timeit(lambda: ProcessWeeklyMatchups(league.current_week, teams, matchups, league, team_matrix), number=1)
-                print(f"Exact calculation completed in {elapsed_time:.6f} seconds")
+                logger.info(f"Using exact calculation. Estimated time: {scenarios*time_per_scenario:.1f} seconds")
+                
+                start_time = timeit.default_timer()
+                ProcessWeeklyMatchupsWithProgress(league.current_week, teams, matchups, league, team_matrix, logger=logger)
+                elapsed_time = timeit.default_timer() - start_time
+                
+                logger.info(f"Exact calculation completed in {elapsed_time:.2f} seconds")
 
             # Process the percentage of scenarios where the team made the playoffs.
+            logger.info("Calculating final playoff percentages...")
             for team in teams:
                 team.playoff_percentage = round((team.playoff_scenarios/scenarios), 3)
                 team.guaranteed_playoff_percentage = round((team.guaranteed_playoff_scenarios/scenarios), 3)
 
             # Create a list of lists containing the relevant properties
+            logger.info("Generating results table...")
             team_data = [
                 [team.name, f"{team.wins}-{team.losses}", team.fantasy_points_for, team.fantasy_points_against, team.guaranteed_playoff_percentage, team.playoff_percentage]
                 for team in sorted(teams, key=lambda x: (x.wins, x.playoff_percentage), reverse=True)
@@ -509,6 +639,12 @@ def main():
                 
             print(f"\nPlayoff Probabilities {algorithm_note}:")
             print(tabulate(team_data, headers, tablefmt="presto", floatfmt=".2%"))
+            
+            logger.info("Playoff calculation completed successfully")
+        else:
+            logger.warning("No remaining matchups found")
+    else:
+        logger.warning("Playoffs have already started - no calculations needed")
 
 
 if __name__ == "__main__":
