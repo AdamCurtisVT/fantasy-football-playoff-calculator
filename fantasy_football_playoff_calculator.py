@@ -21,7 +21,7 @@ from tqdm import tqdm
 
 def setup_logging(verbose: bool = False) -> logging.Logger:
     """
-    Set up logging configuration.
+    Set up logging configuration for console output only.
     """
     level = logging.DEBUG if verbose else logging.INFO
     
@@ -32,10 +32,6 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     
-    # Create file handler
-    file_handler = logging.FileHandler(CONFIG.LOG_FILENAME, mode='a')
-    file_handler.setFormatter(formatter)
-    
     # Set up logger
     logger = logging.getLogger(__name__)
     logger.setLevel(level)
@@ -43,9 +39,8 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
     # Clear existing handlers to avoid duplicates
     logger.handlers.clear()
     
-    # Add handlers
+    # Add console handler only
     logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
     
     return logger
 
@@ -65,14 +60,12 @@ class Config:
     API_RETRY_ATTEMPTS: int = 3
     API_RETRY_DELAY: float = 1.0
     API_BASE_URL: str = 'https://api.sleeper.app/v1'
-    LOG_FILENAME: str = 'playoff_calculator.log'
     PROGRESS_UPDATE_INTERVAL: int = 100  # Update progress every N scenarios
     EARLY_PRUNING_THRESHOLD: int = 3  # Enable pruning when <= N weeks remain
     PROGRESS_DISABLE_THRESHOLD: int = 1000000  # Disable progress bars for very large scenario counts
 
-def get_default_config() -> Config:
-    """Factory function to get default configuration."""
-    return Config()
+# Global configuration instance
+CONFIG = Config()
 
 #-------------------------------------------------
 # Classes
