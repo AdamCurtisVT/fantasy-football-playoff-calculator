@@ -1,3 +1,5 @@
 requests
 tabulate
 tqdm
+numpy
+numba
